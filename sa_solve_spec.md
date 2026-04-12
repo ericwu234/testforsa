@@ -260,6 +260,8 @@ python3 show_results.py --top 5  # 只看最佳 5 筆
 
 ### Step 4：版本控管
 
+所有實作開發在 `sa-impl` branch 上進行，**不可推送到 `master`**。
+
 每當一個版本有明確進展，建立 git commit：
 
 ```bash
