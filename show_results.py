@@ -3,7 +3,7 @@
 
 執行方式：
     python3 show_results.py           # 顯示所有結果
-    python3 show_results.py --top 5   # 只顯示最佳 5 筆
+    python3 show_results.py --top 5   # 只顯示最佳 5 筆（以 mean TotalPenalty 排序）
 """
 import argparse
 import json
@@ -11,19 +11,6 @@ import os
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 BASELINE_PATH = os.path.join(RESULTS_DIR, "baseline_ortools.json")
-
-KEY_STATS = [
-    "TotalPenalty",
-    "DemandDeviation",
-    "ConsecWorkExceedDays",
-    "TransitionViolations",
-    "DoubleRestMissing",
-    "RestFairnessMissing",
-    "WeekendRestMissing",
-    "SingleRestBreaks",
-    "CrossGroupCount",
-    "FixedViolations",
-]
 
 
 def load_results():
@@ -43,81 +30,83 @@ def load_results():
     return records
 
 
+def get_penalty(record):
+    """取出 TotalPenalty mean（SA）或單次值（baseline）"""
+    if "aggregate" in record:
+        return record["aggregate"]["TotalPenalty"]["mean"]
+    return record["stats"]["TotalPenalty"]
+
+
 def print_table(records, top_n=None):
     if not records:
         print("沒有任何實驗記錄。")
         return
 
-    # 依 TotalPenalty 排序，baseline 固定置頂
     baseline = next((r for r in records if r["_filename"] == "baseline_ortools.json"), None)
     others = [r for r in records if r["_filename"] != "baseline_ortools.json"]
-    others.sort(key=lambda r: r["stats"]["TotalPenalty"])
+    others.sort(key=get_penalty)
     if top_n:
         others = others[:top_n]
     ordered = ([baseline] if baseline else []) + others
 
-    # 欄寬
-    col_ver  = 20
-    col_pen  = 10
-    col_dem  = 6
-    col_con  = 6
-    col_tra  = 6
-    col_dbl  = 6
-    col_rest = 6
-    col_wknd = 6
-    col_srb  = 6
-    col_cg   = 6
-    col_time = 8
-    col_iter = 10
-    col_note = 30
+    baseline_penalty = get_penalty(baseline) if baseline else None
+
+    # 欄位寬度
+    W = dict(ver=22, mean=8, std=7, best=7, worst=7,
+             dem=6, srb=6, cg=6, runs=5, time=8, note=28)
+
+    def h(name, w, align=">"): return f"{name:{align}{w}}"
 
     header = (
-        f"{'版本':<{col_ver}} {'Penalty':>{col_pen}} {'Demand':>{col_dem}}"
-        f" {'Consec':>{col_con}} {'Trans':>{col_tra}} {'DblRst':>{col_dbl}}"
-        f" {'MonRst':>{col_rest}} {'WkndRst':>{col_wknd}} {'SRB':>{col_srb}}"
-        f" {'CrsGrp':>{col_cg}} {'時間(s)':>{col_time}} {'迭代數':>{col_iter}}"
-        f"  {'備註'}"
+        f"{'版本':<{W['ver']}} {h('Mean',W['mean'])} {h('±Std',W['std'])}"
+        f" {h('Best',W['best'])} {h('Worst',W['worst'])}"
+        f" {h('Demand',W['dem'])} {h('SRB',W['srb'])} {h('CrsGrp',W['cg'])}"
+        f" {h('Runs',W['runs'])} {h('時間(s)',W['time'])}  {'備註'}"
     )
-    sep = "-" * len(header)
+    sep = "─" * len(header)
 
     print(sep)
     print(header)
     print(sep)
 
-    baseline_penalty = baseline["stats"]["TotalPenalty"] if baseline else None
-
     for r in ordered:
-        s = r["stats"]
-        penalty = s["TotalPenalty"]
         is_baseline = (r["_filename"] == "baseline_ortools.json")
 
-        # 標示是否打敗基準
+        agg = r["aggregate"]
+        penalty_mean  = agg["TotalPenalty"]["mean"]
+        penalty_std   = agg["TotalPenalty"]["std"]
+        penalty_best  = agg["TotalPenalty"]["best"]
+        penalty_worst = agg["TotalPenalty"]["worst"]
+        demand  = agg["DemandDeviation"]["mean"]
+        srb     = agg["SingleRestBreaks"]["mean"]
+        cg      = agg["CrossGroupCount"]["mean"]
+        num_runs = r.get("num_runs", len(r.get("runs", [])))
+        elapsed = agg["elapsed_sec"]["mean"]
+
         if is_baseline:
             tag = "[baseline]"
-        elif baseline_penalty is not None and penalty < baseline_penalty:
-            tag = f"[v{r.get('version','')}] ✓ BEAT"
         else:
-            tag = f"[v{r.get('version','')}]"
+            beat = baseline_penalty is not None and penalty_mean < baseline_penalty
+            tag = f"[v{r.get('version','')}]" + (" ✓" if beat else "")
 
-        label = tag[:col_ver]
-        note  = r.get("notes", "")[:col_note]
-        elapsed = r.get("elapsed_sec", 0)
-        iters   = r.get("iterations", 0)
+        note = r.get("notes", "")[:W["note"]]
 
         row = (
-            f"{label:<{col_ver}} {penalty:>{col_pen}.4f} {s['DemandDeviation']:>{col_dem}.1f}"
-            f" {s['ConsecWorkExceedDays']:>{col_con}} {s['TransitionViolations']:>{col_tra}}"
-            f" {s['DoubleRestMissing']:>{col_dbl}} {s['RestFairnessMissing']:>{col_rest}.1f}"
-            f" {s['WeekendRestMissing']:>{col_wknd}} {s['SingleRestBreaks']:>{col_srb}}"
-            f" {s['CrossGroupCount']:>{col_cg}} {elapsed:>{col_time}.1f} {iters:>{col_iter},}"
-            f"  {note}"
+            f"{tag:<{W['ver']}} {penalty_mean:>{W['mean']}.4f} {penalty_std:>{W['std']}.4f}"
+            f" {penalty_best:>{W['best']}.4f} {penalty_worst:>{W['worst']}.4f}"
+            f" {demand:>{W['dem']}.1f} {srb:>{W['srb']}.1f} {cg:>{W['cg']}.1f}"
+            f" {num_runs:>{W['runs']}} {elapsed:>{W['time']}.1f}  {note}"
         )
         print(row)
 
     print(sep)
-    if baseline_penalty is not None:
-        beaten = [r for r in others if r["stats"]["TotalPenalty"] < baseline_penalty]
-        print(f"共 {len(others)} 筆 SA 實驗，其中 {len(beaten)} 筆打敗基準線（{baseline_penalty}）")
+
+    if baseline_penalty is not None and others:
+        beaten = [r for r in others if get_penalty(r) < baseline_penalty]
+        print(
+            f"共 {len(others)} 筆 SA 實驗，其中 {len(beaten)} 筆"
+            f"（mean）打敗基準線（{baseline_penalty:.4f}）"
+        )
 
 
 def main():

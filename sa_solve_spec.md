@@ -4,18 +4,16 @@
 
 實作模擬退火演算法（Simulated Annealing，SA），以 `evaluation.py` 的 `evaluate()` 為適應度函數，在相同資料設定下取得比 OR-Tools CP-SAT 求解器更低的懲罰分數。
 
-**基準線（OR-Tools 30 秒結果）**
+**基準線（OR-Tools 30 秒 × 5 seeds 平均）**
 
 ```
-TotalPenalty     : 2.6
-DemandDeviation  : 0.0   ← 人力已滿足，不可退步
-RestFairnessMissing : 2.0
-WeekendRestMissing  : 4
-SingleRestBreaks    : 16   ← 最大改善空間
-CrossGroupCount     : 2
+mean TotalPenalty : 2.56   std=0.15   best=2.30   worst=2.70
+DemandDeviation   : 0.0    ← 人力已滿足，不可退步
+SingleRestBreaks  : 11.6   ← 最大改善空間
+CrossGroupCount   : 3.2
 ```
 
-目標：`TotalPenalty < 2.6`，且 `DemandDeviation == 0`（人力需求不可有缺口）。
+目標：`5-run mean TotalPenalty < 2.56`，且每次執行的 `DemandDeviation == 0`。
 
 ---
 
@@ -48,7 +46,29 @@ CrossGroupCount     : 2
 
 ---
 
-## 四、解的表示與初始解
+## 四、評估規則：5-Run 平均
+
+SA 具有隨機性，**單次結果不具統計意義**。每個版本的實驗結果以 **5 次獨立執行的平均 TotalPenalty** 作為正式成績。
+
+- 每次執行使用不同的隨機種子（`seed = 0, 1, 2, 3, 4` 或任意 5 個固定值）
+- **打敗基準的判斷標準**：5-run 的 `mean TotalPenalty < 2.56`（baseline）
+- `std` 越小代表演算法越穩定，也是重要的參考指標
+
+SA 主函式必須接受 `seed` 參數以確保可重現性：
+
+```python
+def sa_solve(daily_demand, fixed, groups, seed: int = 0) -> Tuple[List[List[int]], int]:
+    """
+    Returns
+    -------
+    assign     : 最佳班表
+    iterations : 實際執行的迭代次數
+    """
+```
+
+---
+
+## 五、解的表示與初始解
 
 ```python
 assign: List[List[int]]  # shape: [num_employees][num_days]
@@ -167,7 +187,80 @@ from evaluation import evaluate, allowed, ViolationStats
 
 ---
 
-## 十、驗證清單
+## 十、研究工作流程
+
+每次修改或實驗後，按以下流程執行：
+
+### Step 1：執行 5 次並記錄結果
+
+在 `sa_solve.py` 結尾執行 5-run 並呼叫 `save_result()`：
+
+```python
+from save_result import save_result
+from instance import build_instance
+from evaluation import evaluate
+import time
+
+NUM_RUNS = 5
+daily_demand, fixed, groups = build_instance()
+runs = []
+
+for seed in range(NUM_RUNS):
+    t0 = time.time()
+    best_assign, iterations = sa_solve(daily_demand, fixed, groups, seed=seed)
+    elapsed = time.time() - t0
+    stats, _ = evaluate(best_assign, daily_demand, groups=groups, fixed=fixed)
+    runs.append((stats, elapsed, iterations))
+
+save_result(
+    runs=runs,
+    version="v1",                        # 每次有意義的改動更新版號
+    notes="基礎 SA，三種算子等比例",      # 記錄本次的主要改動
+    hyperparams={
+        "T_initial": ...,
+        "cooling_rate": ...,
+        "time_limit_sec": ...,
+        "num_runs": NUM_RUNS,
+    },
+)
+```
+
+結果會自動存入 `results/sa_v1_YYYYMMDD_HHMMSS.json`，包含每次個別結果與聚合統計（mean、std、best、worst）。
+
+### Step 2：比較所有版本
+
+```bash
+python3 show_results.py          # 完整列表
+python3 show_results.py --top 5  # 只看最佳 5 筆
+```
+
+輸出範例：
+
+```
+-----------------------------------------------------------
+版本                    Penalty  Demand  Consec  ...  備註
+-----------------------------------------------------------
+[baseline]               2.3000     0.0       0  ...  OR-Tools CP-SAT 30s
+[v1] ✓ BEAT              2.1000     0.0       0  ...  基礎 SA，三種算子等比例
+[v2]                     2.5000     0.0       0  ...  調高初始溫度
+-----------------------------------------------------------
+共 2 筆 SA 實驗，其中 1 筆打敗基準線（2.3）
+```
+
+### Step 3：版本控管
+
+每當一個版本有明確進展（打敗基準或提出新策略），建立 git commit：
+
+```bash
+git add sa_solve.py
+git commit -m "v1: 基礎 SA，TotalPenalty=2.1，打敗 OR-Tools"
+```
+
+這樣可以隨時 `git diff` 比較不同版本的程式碼差異。
+
+---
+
+## 十一、驗證清單
 
 實作完成後確認以下項目：
 

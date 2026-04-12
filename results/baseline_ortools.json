@@ -1,27 +1,191 @@
 {
-  "timestamp": "2026-04-12T19:24:03",
+  "timestamp": "2026-04-12T19:34:57",
   "version": "ortools",
-  "notes": "OR-Tools CP-SAT 30s，FIXED+DEMAND hard，其餘 soft",
+  "notes": "OR-Tools CP-SAT 30s，FIXED+DEMAND hard，其餘 soft，5 seeds",
   "hyperparams": {
     "time_limit_sec": 30,
     "num_workers": 20,
-    "demand_hard_equal": false
+    "demand_hard_equal": false,
+    "seeds": [
+      12345,
+      11111,
+      22222,
+      33333,
+      44444
+    ]
   },
-  "stats": {
-    "DemandDeviation": 0.0,
-    "ConsecWorkExceedDays": 0,
-    "TransitionViolations": 0,
-    "NightTo_EarlyNoonAdmin": 0,
-    "NoonTo_EarlyAdmin": 0,
-    "EarlyNoonAdminTo_Night": 0,
-    "DoubleRestMissing": 0,
-    "RestFairnessMissing": 1.0,
-    "WeekendRestMissing": 5,
-    "SingleRestBreaks": 11,
-    "CrossGroupCount": 3,
-    "FixedViolations": 0,
-    "TotalPenalty": 2.3000000000000003
+  "num_runs": 5,
+  "aggregate": {
+    "TotalPenalty": {
+      "mean": 2.56,
+      "std": 0.1497,
+      "best": 2.3,
+      "worst": 2.7
+    },
+    "DemandDeviation": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0.0,
+      "worst": 0.0
+    },
+    "ConsecWorkExceedDays": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0,
+      "worst": 0
+    },
+    "TransitionViolations": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0,
+      "worst": 0
+    },
+    "DoubleRestMissing": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0,
+      "worst": 0
+    },
+    "RestFairnessMissing": {
+      "mean": 1.0,
+      "std": 0.6325,
+      "best": 0.0,
+      "worst": 2.0
+    },
+    "WeekendRestMissing": {
+      "mean": 6.6,
+      "std": 3.3823,
+      "best": 4,
+      "worst": 13
+    },
+    "SingleRestBreaks": {
+      "mean": 11.6,
+      "std": 3.8781,
+      "best": 4,
+      "worst": 15
+    },
+    "CrossGroupCount": {
+      "mean": 3.2,
+      "std": 0.7483,
+      "best": 2,
+      "worst": 4
+    },
+    "FixedViolations": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0,
+      "worst": 0
+    },
+    "elapsed_sec": {
+      "mean": 30.55,
+      "std": 0.59
+    }
   },
-  "elapsed_sec": 30.9,
-  "iterations": 0
+  "runs": [
+    {
+      "run": 1,
+      "seed": 12345,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 1.0,
+        "WeekendRestMissing": 7,
+        "SingleRestBreaks": 13,
+        "CrossGroupCount": 3,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.7
+      },
+      "elapsed_sec": 30.3,
+      "iterations": 0
+    },
+    {
+      "run": 2,
+      "seed": 11111,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 0.0,
+        "WeekendRestMissing": 4,
+        "SingleRestBreaks": 15,
+        "CrossGroupCount": 4,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.7
+      },
+      "elapsed_sec": 30.24,
+      "iterations": 0
+    },
+    {
+      "run": 3,
+      "seed": 22222,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 1.0,
+        "WeekendRestMissing": 4,
+        "SingleRestBreaks": 13,
+        "CrossGroupCount": 4,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.6
+      },
+      "elapsed_sec": 30.26,
+      "iterations": 0
+    },
+    {
+      "run": 4,
+      "seed": 33333,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 2.0,
+        "WeekendRestMissing": 13,
+        "SingleRestBreaks": 4,
+        "CrossGroupCount": 2,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.3
+      },
+      "elapsed_sec": 31.73,
+      "iterations": 0
+    },
+    {
+      "run": 5,
+      "seed": 44444,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 1.0,
+        "WeekendRestMissing": 5,
+        "SingleRestBreaks": 13,
+        "CrossGroupCount": 3,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.5
+      },
+      "elapsed_sec": 30.21,
+      "iterations": 0
+    }
+  ]
 }
