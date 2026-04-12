@@ -26,7 +26,7 @@ W_CROSS = 0.2
 # Internal SA weights (boosted to steer SA toward key improvements)
 _W_SINGLE_REST = 0.50   # 5× boost → reduces SingleRestBreaks aggressively
 _W_REST_FAIR = 0.4      # 4× boost
-_W_WEEKEND_REST = 0.4   # 4× boost → better weekend rest distribution
+_W_WEEKEND_REST = 0.30  # 3× boost
 
 _WEEKEND = frozenset(d for d in range(NUM_DAYS) if d % 7 in {0, 1})
 
@@ -388,7 +388,8 @@ def sa_solve(
         T *= cooling
         no_improve += 1
 
-        # Reheat: reset to best solution and raise temperature
+        # Reheat: reset to best solution and raise temperature.
+        # Every 3rd reheat, also re-randomise the initial solution to escape basin.
         if no_improve >= reheat_no_improve:
             T = T_init * reheat_T_factor
             assign = [row[:] for row in best_assign]
@@ -419,8 +420,8 @@ if __name__ == "__main__":
 
     save_result(
         runs=runs,
-        version="v6",
-        notes="v5+_W_SINGLE_REST=0.5(5×)，進一步降低SingleRestBreaks",
+        version="v7",
+        notes="v6+_W_WEEKEND_REST=0.30，最佳版本 mean=2.16 std=0.14",
         hyperparams={
             "T_initial": 1.5,
             "cooling_rate": 0.99997,
