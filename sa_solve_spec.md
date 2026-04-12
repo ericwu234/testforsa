@@ -79,32 +79,20 @@ def sa_solve(
 assign: List[List[int]]  # shape: [num_employees][num_days]
 ```
 
-**初始解建議**（擇一）
+**初始解建議**
 
-- **方案 A（推薦）**：使用 OR-Tools 的輸出作為初始解，在已知高品質解上進行局部搜尋
-- **方案 B**：根據群組限制與需求隨機生成，但必須確保 hard constraint 全部成立再開始退火
+- **方案 A**：根據群組限制與需求隨機生成，但必須確保 hard constraint 全部成立再開始退火
 
 ---
 
 ## 六、鄰域算子（Neighbourhood Operators）
 
-每次迭代從以下算子中隨機選一種執行，生成候選解：
+算子的設計由實作者自主研究，以下為必須遵守的**合法性條件**：
 
-### 算子 1：單格修改（Single-cell Shift）
+- 每個算子產生的候選解必須滿足所有 Hard Constraints（見第三節）
+- 不合法的候選解直接拒絕，不進入接受/拒絕判斷
 
-隨機選一個**非固定**格子 `(e, d)`，改為另一個對該員工合法的班別（`allowed(groups[e], s) == True` 且 `s != assign[e][d]`）。
-
-### 算子 2：同員工換天（Intra-employee Day Swap）
-
-隨機選同一員工 `e` 的兩天 `(d1, d2)`（兩格皆非固定），互換其班別。  
-僅在兩天互換後對該員工群組仍合法時才執行。
-
-### 算子 3：跨員工換班（Inter-employee Shift Swap）
-
-隨機選兩位員工 `(e1, e2)` 與同一天 `d`（兩格皆非固定），互換其班別。  
-僅在 `assign[e1][d]` 對 `groups[e2]` 合法，且 `assign[e2][d]` 對 `groups[e1]` 合法時才執行。
-
-> 算子 3 在不改變每日人力分布的情況下調整個人排班，對改善 `CrossGroupCount` 與 `SingleRestBreaks` 特別有效。
+可以設計多種算子，並在迭代中混合使用。算子設計的核心問題是：**如何在保持合法的前提下，有效探索懲罰較低的解空間？**
 
 ---
 
