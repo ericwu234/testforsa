@@ -24,9 +24,9 @@ W_SINGLE_REST = 0.1
 W_CROSS = 0.2
 
 # Internal SA weights (boosted to steer SA toward key improvements)
-_W_SINGLE_REST = 0.35   # 3.5× boost → reduces SingleRestBreaks aggressively
+_W_SINGLE_REST = 0.50   # 5× boost → reduces SingleRestBreaks aggressively
 _W_REST_FAIR = 0.4      # 4× boost
-_W_WEEKEND_REST = 0.15  # 1.5× boost
+_W_WEEKEND_REST = 0.4   # 4× boost → better weekend rest distribution
 
 _WEEKEND = frozenset(d for d in range(NUM_DAYS) if d % 7 in {0, 1})
 
@@ -236,8 +236,12 @@ def sa_solve(
 
             assign[e][d] = new_s
 
-            new_ep = _ep(assign[e], groups[e])
             new_dp = _dp(assign, daily_demand, d)
+            # Don't create a NEW demand shortfall (allow fixing existing ones)
+            if old_dp == 0.0 and new_dp > 0.0:
+                assign[e][d] = old_s
+                continue
+            new_ep = _ep(assign[e], groups[e])
             delta = (new_ep - old_ep) + (new_dp - old_dp)
 
             if delta < 0 or rng.random() < math.exp(-delta / T):
@@ -310,9 +314,14 @@ def sa_solve(
             assign[e][d1] = s2
             assign[e][d2] = s1
 
-            new_ep = _ep(assign[e], groups[e])
             new_dp1 = _dp(assign, daily_demand, d1)
             new_dp2 = _dp(assign, daily_demand, d2)
+            # Don't create NEW demand shortfalls
+            if (old_dp1 == 0.0 and new_dp1 > 0.0) or (old_dp2 == 0.0 and new_dp2 > 0.0):
+                assign[e][d1] = s1
+                assign[e][d2] = s2
+                continue
+            new_ep = _ep(assign[e], groups[e])
             delta = (new_ep - old_ep) + (new_dp1 - old_dp1) + (new_dp2 - old_dp2)
 
             if delta < 0 or rng.random() < math.exp(-delta / T):
@@ -410,8 +419,8 @@ if __name__ == "__main__":
 
     save_result(
         runs=runs,
-        version="v4",
-        notes="v3初始解(admin優先+work_count)+移除demand硬限制；_W_REST_FAIR=0.4",
+        version="v6",
+        notes="v5+_W_SINGLE_REST=0.5(5×)，進一步降低SingleRestBreaks",
         hyperparams={
             "T_initial": 1.5,
             "cooling_rate": 0.99997,
@@ -420,5 +429,6 @@ if __name__ == "__main__":
             "reheat_T_factor": 0.5,
             "_W_SINGLE_REST": 0.35,
             "_W_REST_FAIR": 0.4,
+            "_W_WEEKEND_REST": 0.4,
         },
     )
