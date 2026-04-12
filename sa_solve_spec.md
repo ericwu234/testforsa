@@ -82,7 +82,8 @@ assign: List[List[int]]  # shape: [num_employees][num_days]
 
 **初始解建議**
 
-- **方案 A**：根據群組限制與需求隨機生成，但必須確保 hard constraint 全部成立再開始退火
+- 根據群組限制與需求隨機生成，或使用其他策略建構初始解
+- 初始解必須滿足所有 Hard Constraints，且建議 **`DemandDeviation == 0`**（人力需求已滿足），避免退火從高懲罰起點出發
 
 ---
 
@@ -94,6 +95,8 @@ assign: List[List[int]]  # shape: [num_employees][num_days]
 - 不合法的候選解直接拒絕，不進入接受/拒絕判斷
 
 可以設計多種算子，並在迭代中混合使用。算子設計的核心問題是：**如何在保持合法的前提下，有效探索懲罰較低的解空間？**
+
+> **實作注意**：每次操作前須對當前解做**深拷貝**，被拒絕時才能還原。若直接修改原解再復原，容易因邏輯錯誤導致狀態污染，是 SA 常見 bug。
 
 ---
 
@@ -139,7 +142,7 @@ stats, penalty = evaluate(assign, daily_demand, groups=groups, fixed=fixed)
 | `cooling_rate` | 每步降溫比例（`T ← T × cooling_rate`），決定探索轉為開發的速度 |
 | `max_iterations` | 總迭代上限，作為時間限制以外的安全停止條件 |
 | `time_limit_sec` | 執行時間上限，建議優先以此為主要停止條件 |
-| 算子選擇比例 | 三種算子各自被選中的機率，可視改善瓶頸動態調整 |
+| 算子選擇比例 | 各算子被選中的機率，可視改善瓶頸動態調整 |
 
 > 可在執行過程中監控**近期接受率**（近 N 次迭代中被接受的比例），作為溫度是否合適的診斷依據。
 
@@ -167,7 +170,7 @@ ViolationStats(...)
 ```
 scheduling/
 ├── instance.py         # 問題資料（daily_demand, fixed, groups）唯一來源
-├── evaluation.py       # 評估函式，不可修改
+├── evaluation.py       # 評估函式（懲罰計算邏輯不可修改，介面參數可擴充）
 ├── ortools_solve.py    # 基準求解器
 ├── save_result.py      # 實驗結果記錄工具
 ├── show_results.py     # 所有版本比較表
@@ -211,7 +214,7 @@ for seed in range(NUM_RUNS):
 save_result(
     runs=runs,
     version="v1",
-    notes="基礎 SA，三種算子等比例",
+    notes="基礎 SA，初版實作",
     hyperparams={"T_initial": ..., "cooling_rate": ..., "time_limit_sec": ...},
 )
 ```
