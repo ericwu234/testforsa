@@ -21,8 +21,13 @@ def evaluate(
     fixed: Optional[List[List[Optional[int]]]] = None,
     max_consecutive_work: int = 5,
     min_double_rest_occurrences: int = 2,
+    verbose: bool = True,
 ) -> Tuple[ViolationStats, float]:
 ```
+
+| 參數 | 說明 |
+|---|---|
+| `verbose` | `True`（預設）：印出完整班表與每日人力分布；`False`：只計算，不印任何內容，適合在最佳化熱循環中使用 |
 
 **回傳值**
 

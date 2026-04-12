@@ -42,6 +42,7 @@ def evaluate(
     fixed: Optional[List[List[Optional[int]]]] = None,
     max_consecutive_work: int = 5,
     min_double_rest_occurrences: int = 2,
+    verbose: bool = True,
 ) -> Tuple[ViolationStats, float]:
     num_employees = len(assign)
     num_days = len(assign[0]) if num_employees > 0 else 0
@@ -186,19 +187,20 @@ def evaluate(
     st.TotalPenalty = penalty
     fitness = penalty
 
-    print("表示法：0=休,1=早,2=午,3=夜,4=行")
-    for e in range(num_employees):
-        print(f"員工{e+1:02d}: " + ",".join(map(str, assign[e])))
-
-    print("\n每日現有人力分布 (早,午,夜,行):")
-    for d in range(num_days):
-        cnt = [0, 0, 0, 0]
+    if verbose:
+        print("表示法：0=休,1=早,2=午,3=夜,4=行")
         for e in range(num_employees):
-            a = assign[e][d]
-            if 1 <= a <= 4:
-                cnt[a - 1] += 1
-        dem = [daily_demand[0][d], daily_demand[1][d], daily_demand[2][d], daily_demand[3][d]]
-        print(f"Day {d+1:02d}: {cnt[0]} , {cnt[1]} , {cnt[2]} , {cnt[3]}  (需求: {dem[0]},{dem[1]},{dem[2]},{dem[3]})")
+            print(f"員工{e+1:02d}: " + ",".join(map(str, assign[e])))
+
+        print("\n每日現有人力分布 (早,午,夜,行):")
+        for d in range(num_days):
+            cnt = [0, 0, 0, 0]
+            for e in range(num_employees):
+                a = assign[e][d]
+                if 1 <= a <= 4:
+                    cnt[a - 1] += 1
+            dem = [daily_demand[0][d], daily_demand[1][d], daily_demand[2][d], daily_demand[3][d]]
+            print(f"Day {d+1:02d}: {cnt[0]} , {cnt[1]} , {cnt[2]} , {cnt[3]}  (需求: {dem[0]},{dem[1]},{dem[2]},{dem[3]})")
 
     return st, fitness
 

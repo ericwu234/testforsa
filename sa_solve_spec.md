@@ -139,22 +139,21 @@ assign: List[List[int]]  # shape: [num_employees][num_days]
 
 ## 八、效能注意事項（重要）
 
-> **`evaluate()` 每次呼叫都會印出完整班表**，若在 SA 熱循環中直接使用會產生數十萬行輸出，且每次重新計算所有項目效率極低。
-
-**正確做法：在熱循環中自行實作輕量版 penalty 計算。**
+`evaluate()` 支援 `verbose` 參數：
 
 ```python
-def compute_penalty(assign, daily_demand, groups, fixed) -> float:
-    """不印任何東西，只回傳 TotalPenalty，用於 SA 熱循環內的 delta 計算。"""
-    # 直接複製 evaluation.py 中的計算邏輯，移除所有 print 語句
-    ...
+# 熱循環內：只計算，不印任何東西
+stats, penalty = evaluate(assign, daily_demand, groups=groups, fixed=fixed, verbose=False)
+
+# run 結束後：計算並印出完整班表報告（預設行為）
+stats, penalty = evaluate(assign, daily_demand, groups=groups, fixed=fixed)
 ```
 
-也可考慮**增量更新（incremental delta）**：移動只影響少數幾個員工和天，只重算受影響的項目，可大幅提升速度。
+**使用規則：**
+- SA 熱循環內一律使用 `verbose=False`
+- 每次 run 結束後呼叫一次預設的 `evaluate()`，取得最終 `ViolationStats` 用於記錄
 
-`evaluate()` 只在以下時機呼叫：
-- 每次 run 結束後，取得最終 `ViolationStats` 用於記錄
-- 除此之外不呼叫
+也可考慮**增量更新（incremental delta）**：移動只影響少數幾個員工和天，只重算受影響項目，可進一步提升速度。
 
 ---
 
@@ -270,6 +269,6 @@ git commit -m "v2: 加入 reheating，mean=2.40，std=0.08"
 - [ ] `fixed` 格子在整個 SA 過程中未被更動
 - [ ] 所有 `assign[e][d]` 值都在 `{0,1,2,3,4}` 內
 - [ ] 每次 run 的 `DemandDeviation == 0`
-- [ ] 熱循環內未直接呼叫 `evaluate()`（改用輕量版 `compute_penalty()`）
+- [ ] 熱循環內呼叫 `evaluate(..., verbose=False)`
 - [ ] 5-run `mean TotalPenalty < 2.56`（打敗 OR-Tools 基準）
 - [ ] `save_result()` 的輸出數字與 `ViolationStats` 一致
