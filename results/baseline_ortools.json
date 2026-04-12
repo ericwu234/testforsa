@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-04-12T19:24:03",
+  "version": "ortools",
+  "notes": "OR-Tools CP-SAT 30s，FIXED+DEMAND hard，其餘 soft",
+  "hyperparams": {
+    "time_limit_sec": 30,
+    "num_workers": 20,
+    "demand_hard_equal": false
+  },
+  "stats": {
+    "DemandDeviation": 0.0,
+    "ConsecWorkExceedDays": 0,
+    "TransitionViolations": 0,
+    "NightTo_EarlyNoonAdmin": 0,
+    "NoonTo_EarlyAdmin": 0,
+    "EarlyNoonAdminTo_Night": 0,
+    "DoubleRestMissing": 0,
+    "RestFairnessMissing": 1.0,
+    "WeekendRestMissing": 5,
+    "SingleRestBreaks": 11,
+    "CrossGroupCount": 3,
+    "FixedViolations": 0,
+    "TotalPenalty": 2.3000000000000003
+  },
+  "elapsed_sec": 30.9,
+  "iterations": 0
+}
