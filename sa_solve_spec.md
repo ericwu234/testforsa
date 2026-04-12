@@ -96,32 +96,15 @@ assign: List[List[int]]  # shape: [num_employees][num_days]
 
 ---
 
-## 七、SA 演算法架構
+## 七、SA 演算法定義
 
-```
-初始化：
-    solution ← 初始解（深拷貝）
-    best     ← solution（深拷貝）
-    T        ← T_initial
+模擬退火的核心特徵是：
 
-迴圈（直到時間到或達到 max_iterations）：
-    candidate ← apply_random_operator(solution)  # 對 solution 的副本操作
-    若 candidate 違反任何 hard constraint → 跳過
+1. **接受劣解的機率**隨溫度 `T` 降低而遞減，使搜尋從早期的廣泛探索逐漸轉為後期的局部開發
+2. **持續追蹤歷史最佳解**（`best`），與當前解（`current`）分開記錄
+3. 最終回傳 `best`，而非最後的 `current`
 
-    delta ← penalty(candidate) - penalty(solution)  # 見「效能注意事項」
-
-    若 delta < 0：
-        solution ← candidate
-        若 penalty(solution) < penalty(best)：
-            best ← solution（深拷貝）
-    否則：
-        以機率 exp(-delta / T) 接受：
-            solution ← candidate
-
-    T ← T × cooling_rate
-
-回傳 best
-```
+具體的降溫策略、重啟機制、接受函數形式等實作細節由實作者自主研究。
 
 ---
 
