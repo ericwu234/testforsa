@@ -70,6 +70,10 @@ def sa_solve(
     assign     : 最佳班表 [num_employees][num_days]
     iterations : 實際執行的迭代次數
     """
+    import random
+    random.seed(seed)
+    # 若使用 numpy，同步設定：
+    # import numpy as np; np.random.seed(seed)
 ```
 
 ---
@@ -95,8 +99,6 @@ assign: List[List[int]]  # shape: [num_employees][num_days]
 - 不合法的候選解直接拒絕，不進入接受/拒絕判斷
 
 可以設計多種算子，並在迭代中混合使用。算子設計的核心問題是：**如何在保持合法的前提下，有效探索懲罰較低的解空間？**
-
-> **實作注意**：每次操作前須對當前解做**深拷貝**，被拒絕時才能還原。若直接修改原解再復原，容易因邏輯錯誤導致狀態污染，是 SA 常見 bug。
 
 ---
 
@@ -128,7 +130,9 @@ stats, penalty = evaluate(assign, daily_demand, groups=groups, fixed=fixed)
 - SA 熱循環內一律使用 `verbose=False`
 - 每次 run 結束後呼叫一次預設的 `evaluate()`，取得最終 `ViolationStats` 用於記錄
 
-也可考慮**增量更新（incremental delta）**：移動只影響少數幾個員工和天，只重算受影響項目，可進一步提升速度。
+**深拷貝注意**：每次生成候選解前須對當前解做深拷貝，被拒絕時才能還原原始狀態。若直接修改原解再嘗試復原，容易因邏輯錯誤造成狀態污染，是 SA 常見 bug。
+
+也可考慮**增量更新（incremental delta）**：移動只影響少數幾個員工和天，只重算受影響項目，可大幅提升每秒迭代次數。
 
 ---
 
@@ -150,15 +154,20 @@ stats, penalty = evaluate(assign, daily_demand, groups=groups, fixed=fixed)
 
 ## 十、輸出格式
 
-每次 run 結束後印出以下資訊（格式與 `ortools_solve.py` 一致）：
+每次 run 結束後，由 `__main__` 區塊（非 `sa_solve()` 內部）印出以下資訊：
 
+```python
+# __main__ 中的印出方式
+print(f"[SA seed={seed}] TotalPenalty: {penalty:.2f}  iterations: {iterations}  time: {elapsed:.1f}s")
+stats, penalty = evaluate(best_assign, daily_demand, groups=groups, fixed=fixed)  # verbose=True，印班表
+print(stats)
+```
+
+預期輸出：
 ```
 [SA seed=0] TotalPenalty: X.XX  iterations: XXXXXX  time: XX.Xs
 表示法：0=休,1=早,2=午,3=夜,4=行
 員工01: 1,2,0,...
-...
-每日現有人力分布 (早,午,夜,行):
-Day 01: 5 , 3 , 2 , 1  (需求: 5,3,2,1)
 ...
 ViolationStats(...)
 ```
@@ -226,7 +235,18 @@ python3 show_results.py          # 完整列表（baseline 置頂，其餘按 me
 python3 show_results.py --top 5  # 只看最佳 5 筆
 ```
 
-### Step 3：版本控管
+### Step 3：分析與決定下一步
+
+比較結果後，依以下方向判斷改進重點：
+
+| 觀察 | 可能原因 | 建議方向 |
+|---|---|---|
+| `mean` 高但 `std` 小 | 收斂到局部最優 | 提高初始溫度、加入重啟機制 |
+| `std` 大 | 搜尋不穩定 | 降低初始溫度、加長退火時間 |
+| `DemandDeviation > 0` | 初始解或算子破壞了需求 | 修正初始解構造或拒絕需求違規的移動 |
+| `SingleRestBreaks` 高 | 算子未針對此項優化 | 設計專門改善連休結構的算子 |
+
+### Step 4：版本控管
 
 每當一個版本有明確進展，建立 git commit：
 
