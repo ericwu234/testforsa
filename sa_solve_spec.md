@@ -199,7 +199,28 @@ from evaluation import evaluate, allowed
 
 ---
 
-## 十二、研究工作流程
+## 十二、執行環境
+
+專案已建立 Python venv，路徑為 `scheduling/.venv/`。
+
+**安裝套件**
+
+```bash
+.venv/bin/pip install <package>
+```
+
+**執行腳本**
+
+```bash
+.venv/bin/python sa_solve.py
+.venv/bin/python show_results.py
+```
+
+不可使用系統 `python3` 或 `pip`，避免套件找不到或版本衝突。
+
+---
+
+## 十四、研究工作流程
 
 ### Step 1：執行 5 次並記錄結果
 
@@ -248,7 +269,7 @@ git commit -m "v2: 加入 reheating，mean=2.40，std=0.08"
 
 ---
 
-## 十三、驗證清單
+## 十五、驗證清單
 
 實作完成後確認以下項目：
 
