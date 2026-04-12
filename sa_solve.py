@@ -222,7 +222,7 @@ def sa_solve(
 
         r = rng.random()
 
-        if r < 0.50:
+        if r < 0.45:
             # --- Operator 1: single-cell reassign ---
             e, d = rng.choice(free_cells)
             old_s = assign[e][d]
@@ -292,7 +292,7 @@ def sa_solve(
                 assign[e1][d] = s1
                 assign[e2][d] = s2
 
-        elif r < 0.95:
+        elif r < 0.90:
             # --- Operator 3: swap two days for same employee ---
             e = rng.randint(0, NUM_EMPLOYEES - 1)
             fd = free_days_e[e]
@@ -420,8 +420,8 @@ if __name__ == "__main__":
 
     save_result(
         runs=runs,
-        version="v7",
-        notes="v6+_W_WEEKEND_REST=0.30，最佳版本 mean=2.16 std=0.14",
+        version="v9",
+        notes="v7+Op4=10%，最佳版本 mean=2.12 std=0.10，Op1=45%,Op2=35%,Op3=10%,Op4=10%",
         hyperparams={
             "T_initial": 1.5,
             "cooling_rate": 0.99997,
