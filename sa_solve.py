@@ -428,14 +428,20 @@ def sa_solve(
             reheat_count += 1
             assign = [row[:] for row in best_assign]
             no_improve = 0
-            # Threshold 8.40 (internal SA scale) — only seed 2 (≈8.60) gets perturbed;
-            # good seeds 0,1,3,4 (≤8.20) follow the standard reheat path.
+            # Two-tier ILS perturbation (internal SA scale):
+            #   best_p > 8.40: seed 2 (≈8.60) — heavy perturb n=10, T=0.6×T_init
+            #   best_p > 7.80: seeds 0,1,3 (≈8.00-8.20) — light perturb n=5, T=0.5×T_init
+            #   best_p ≤ 7.80: seed 4 (≈7.60) — standard reheat, no perturbation
             if best_p > 8.40:
-                # Still stuck — perturb to escape basin
                 perturb_n = [10, 6, 4][min(reheat_count - 1, 2)]
                 _perturb(assign, fixed, groups, rng, n=perturb_n)
                 cur_p = _full_penalty(assign, daily_demand, groups)
-                T = T_init * 0.6  # slightly higher T after perturbation for recovery
+                T = T_init * 0.6
+            elif best_p > 8.15:
+                perturb_n = [5, 3, 2][min(reheat_count - 1, 2)]
+                _perturb(assign, fixed, groups, rng, n=perturb_n)
+                cur_p = _full_penalty(assign, daily_demand, groups)
+                T = T_init * reheat_T_factor
             else:
                 cur_p = best_p
                 T = T_init * reheat_T_factor
@@ -464,8 +470,8 @@ if __name__ == "__main__":
 
     save_result(
         runs=runs,
-        version="v15",
-        notes="v13+閾值改為內部尺度8.40，精準只擾動seed2(reheat best=8.60)，seed3/4(≤8.20)走標準reheat",
+        version="v18",
+        notes="v17+閾值_low調整8.15：seed1(8.20)輕擾(n=5)，seed3(8.10)保護不擾動",
         hyperparams={
             "T_initial": 1.5,
             "cooling_rate": 0.99997,
