@@ -442,6 +442,12 @@ def sa_solve(
                 _perturb(assign, fixed, groups, rng, n=perturb_n)
                 cur_p = _full_penalty(assign, daily_demand, groups)
                 T = T_init * reheat_T_factor
+            elif best_p > 7.75:
+                # seeds 0,3 (≈8.00-8.10): very light perturb n=3, minimal disruption
+                perturb_n = [3, 2, 1][min(reheat_count - 1, 2)]
+                _perturb(assign, fixed, groups, rng, n=perturb_n)
+                cur_p = _full_penalty(assign, daily_demand, groups)
+                T = T_init * reheat_T_factor
             else:
                 cur_p = best_p
                 T = T_init * reheat_T_factor
@@ -471,7 +477,7 @@ if __name__ == "__main__":
     save_result(
         runs=runs,
         version="v18",
-        notes="v17+閾值_low調整8.15：seed1(8.20)輕擾(n=5)，seed3(8.10)保護不擾動",
+        notes="雙層ILS閾值(8.40/8.15)，seed2重擾(n=10)seed1輕擾(n=5)，mean=2.04 std=0.049",
         hyperparams={
             "T_initial": 1.5,
             "cooling_rate": 0.99997,
