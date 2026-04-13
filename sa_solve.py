@@ -175,6 +175,37 @@ def _build_initial(
     return assign
 
 
+def _perturb(
+    assign: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    rng: random.Random,
+    n: int = 12,
+) -> None:
+    """ILS perturbation: force n random demand-neutral same-day swaps to escape local basin."""
+    attempts = 0
+    done = 0
+    while done < n and attempts < n * 10:
+        attempts += 1
+        d = rng.randint(0, NUM_DAYS - 1)
+        cands = [(e, assign[e][d]) for e in range(NUM_EMPLOYEES) if fixed[e][d] is None]
+        if len(cands) < 2:
+            continue
+        i1 = rng.randrange(len(cands))
+        i2 = rng.randrange(len(cands) - 1)
+        if i2 >= i1:
+            i2 += 1
+        e1, s1 = cands[i1]
+        e2, s2 = cands[i2]
+        if s1 == s2:
+            continue
+        if not allowed(groups[e1], s2) or not allowed(groups[e2], s1):
+            continue
+        assign[e1][d] = s2
+        assign[e2][d] = s1
+        done += 1
+
+
 def sa_solve(
     daily_demand: List[List[int]],
     fixed: List[List[Optional[int]]],
@@ -191,7 +222,7 @@ def sa_solve(
     T = T_init
     cooling = 0.99997
     time_limit = 29.5
-    reheat_no_improve = 60000
+    reheat_no_improve = 60000   # T→0 at ~383k iters (~9s), reheat fires at ~t=10s and ~t=20s
     reheat_T_factor = 0.5
 
     assign = _build_initial(daily_demand, fixed, groups, rng)
@@ -215,6 +246,7 @@ def sa_solve(
 
     iterations = 0
     no_improve = 0
+    reheat_count = 0
     t0 = time.time()
 
     while time.time() - t0 < time_limit:
@@ -388,13 +420,23 @@ def sa_solve(
         T *= cooling
         no_improve += 1
 
-        # Reheat: reset to best solution and raise temperature.
-        # Every 3rd reheat, also re-randomise the initial solution to escape basin.
+        # Reheat: reset to best and raise temperature.
+        # Reheats fire at ~t=10s and ~t=20s (2 reheats per run).
+        # Conditional ILS perturbation: only perturb if best is still above 2.15
+        # (stuck in bad local optimum). Good seeds (best ≤ 2.15) are left undisturbed.
         if no_improve >= reheat_no_improve:
-            T = T_init * reheat_T_factor
+            reheat_count += 1
             assign = [row[:] for row in best_assign]
-            cur_p = best_p
             no_improve = 0
+            if best_p > 2.15:
+                # Still stuck — perturb to escape basin
+                perturb_n = [10, 6, 4][min(reheat_count - 1, 2)]
+                _perturb(assign, fixed, groups, rng, n=perturb_n)
+                cur_p = _full_penalty(assign, daily_demand, groups)
+                T = T_init * 0.6  # slightly higher T after perturbation for recovery
+            else:
+                cur_p = best_p
+                T = T_init * reheat_T_factor
 
     return best_assign, iterations
 
@@ -420,16 +462,17 @@ if __name__ == "__main__":
 
     save_result(
         runs=runs,
-        version="v9",
-        notes="v7+Op4=10%，最佳版本 mean=2.12 std=0.10，Op1=45%,Op2=35%,Op3=10%,Op4=10%",
+        version="v13",
+        notes="v9+條件ILS擾動(best_p>2.15才perturb)，保護好seed不受干擾",
         hyperparams={
             "T_initial": 1.5,
             "cooling_rate": 0.99997,
             "time_limit_sec": 29.5,
             "reheat_no_improve": 60000,
             "reheat_T_factor": 0.5,
-            "_W_SINGLE_REST": 0.35,
+            "perturb_n_per_reheat": [10, 6, 4],
+            "_W_SINGLE_REST": 0.50,
             "_W_REST_FAIR": 0.4,
-            "_W_WEEKEND_REST": 0.4,
+            "_W_WEEKEND_REST": 0.30,
         },
     )
