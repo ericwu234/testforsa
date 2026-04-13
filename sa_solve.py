@@ -442,12 +442,6 @@ def sa_solve(
                 _perturb(assign, fixed, groups, rng, n=perturb_n)
                 cur_p = _full_penalty(assign, daily_demand, groups)
                 T = T_init * reheat_T_factor
-            elif best_p > 7.75:
-                # seeds 0,3 (≈8.00-8.10): very light perturb n=3, minimal disruption
-                perturb_n = [3, 2, 1][min(reheat_count - 1, 2)]
-                _perturb(assign, fixed, groups, rng, n=perturb_n)
-                cur_p = _full_penalty(assign, daily_demand, groups)
-                T = T_init * reheat_T_factor
             else:
                 cur_p = best_p
                 T = T_init * reheat_T_factor
