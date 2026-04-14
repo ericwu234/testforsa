@@ -25,7 +25,7 @@ W_CROSS = 0.2
 
 # Internal SA weights (boosted to steer SA toward key improvements)
 _W_SINGLE_REST = 0.50   # 5× boost → reduces SingleRestBreaks aggressively
-_W_REST_FAIR = 0.4      # 4× boost
+_W_REST_FAIR = 0.40     # 4× boost
 _W_WEEKEND_REST = 0.30  # 3× boost
 
 _WEEKEND = frozenset(d for d in range(NUM_DAYS) if d % 7 in {0, 1})
@@ -139,7 +139,6 @@ def _build_initial(
                     work_count[e] += 1
 
     # Greedy fill: process days in random order, admin first to balance e00/e15.
-    # Sort candidates by work_count ascending to spread workload evenly.
     day_order = list(range(NUM_DAYS))
     rng.shuffle(day_order)
 
@@ -152,14 +151,12 @@ def _build_initial(
 
         free = [e for e in range(NUM_EMPLOYEES) if fixed[e][d] is None and assign[e][d] == 0]
 
-        # Process admin (si=3) first to optimise e00/e15 balance, then other shifts
         for si in [3, 0, 1, 2]:
             needed = max(0, daily_demand[si][d] - cnt[si])
             if needed == 0:
                 continue
             actual_shift = si + 1
             cands = [e for e in free if allowed(groups[e], actual_shift)]
-            # Least-worked employees get priority → even distribution
             cands.sort(key=lambda e: work_count[e])
             chosen = cands[:needed]
             remaining_free = []
@@ -175,6 +172,42 @@ def _build_initial(
     return assign
 
 
+def _build_initial_rest_first(
+    daily_demand: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    rng: random.Random,
+) -> List[List[int]]:
+    """Rest-first initial construction: place rest days optimally first, then fill work.
+
+    Unlike the greedy-fill construction (work-first), this approach places each
+    employee's rest days using the scored greedy from LNS repair (prefer adjacent
+    blocks and weekends), then fills work days to cover demand. Gives SA a better
+    starting rest structure, potentially finding better basins.
+    """
+    # Phase 1: start with all non-fixed days as work (same as LNS destroy state)
+    assign = [[0] * NUM_DAYS for _ in range(NUM_EMPLOYEES)]
+    for e in range(NUM_EMPLOYEES):
+        for d in range(NUM_DAYS):
+            if fixed[e][d] is not None:
+                assign[e][d] = fixed[e][d]
+            else:
+                # Assign a plausible work shift (fill demand or first allowed)
+                for s in range(1, 5):
+                    if allowed(groups[e], s):
+                        assign[e][d] = s
+                        break
+
+    # Phase 2: repair each employee's rest pattern using scored greedy (LNS repair)
+    # Process in random order so that later employees can find good rest days too
+    emp_order = list(range(NUM_EMPLOYEES))
+    rng.shuffle(emp_order)
+    for e in emp_order:
+        assign[e] = _lns_repair_one(e, assign, fixed, groups, daily_demand, rng)
+
+    return assign
+
+
 def _perturb(
     assign: List[List[int]],
     fixed: List[List[Optional[int]]],
@@ -182,7 +215,7 @@ def _perturb(
     rng: random.Random,
     n: int = 12,
 ) -> None:
-    """ILS perturbation: force n random demand-neutral same-day swaps to escape local basin."""
+    """ILS perturbation: force n random demand-neutral same-day swaps (v18)."""
     attempts = 0
     done = 0
     while done < n and attempts < n * 10:
@@ -206,6 +239,229 @@ def _perturb(
         done += 1
 
 
+def _count_srb_score(ae: List[int]) -> float:
+    """Count SRBs + WRM deficit for targeting worst employees."""
+    srb = sum(1 for d in range(1, NUM_DAYS - 1)
+              if ae[d] == 0 and ae[d - 1] != 0 and ae[d + 1] != 0)
+    wr = sum(1 for d in range(NUM_DAYS) if ae[d] == 0 and d in _WEEKEND)
+    wrm_deficit = max(0, MIN_WEEKEND_REST - wr)
+    return srb + wrm_deficit
+
+
+def _lns_perturb(
+    assign: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    daily_demand: List[List[int]],
+    rng: random.Random,
+    k: int = 3,
+) -> None:
+    """LNS perturbation: destroy k worst employees' rest patterns, repair greedily.
+
+    Selects the k employees with the highest SRB+WRM deficit, destroys their
+    rest assignments (resets free days to work), then repairs each using the
+    scored greedy rest placement. Modifies assign in place.
+    """
+    # Select k employees with highest SRB+WRM score
+    scores = [(e, _count_srb_score(assign[e])) for e in range(NUM_EMPLOYEES)]
+    scores.sort(key=lambda x: -x[1])
+    target_emps = [e for e, _ in scores[:k]]
+
+    # Destroy: reset non-fixed rest days to work
+    for e in target_emps:
+        for d in range(NUM_DAYS):
+            if fixed[e][d] is None and assign[e][d] == 0:
+                for s in range(1, 5):
+                    if allowed(groups[e], s):
+                        assign[e][d] = s
+                        break
+
+    # Repair: greedy rest placement for each
+    for e in target_emps:
+        assign[e] = _lns_repair_one(e, assign, fixed, groups, daily_demand, rng)
+
+
+def _lns_repair_one(
+    e: int,
+    assign: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    daily_demand: List[List[int]],
+    rng: random.Random,
+) -> List[int]:
+    """LNS repair: greedily place rest days for employee e to minimize SRB+WRM.
+
+    Computes which days employee e can rest (demand met by others), then
+    places exactly max(MIN_MONTHLY_REST, current_rests) rest days using a
+    scored greedy: prefer days adjacent to existing rests (+4) and weekends (+2),
+    penalise isolated positions (-3).
+
+    Returns new ae (length NUM_DAYS) without modifying assign.
+    """
+    N = NUM_DAYS
+
+    # Determine can_rest and default work shift for each free day
+    can_rest_set = set()
+    work_shift_for = {}  # d -> shift to work if not resting
+    for d in range(N):
+        if fixed[e][d] is not None:
+            if fixed[e][d] == 0:
+                can_rest_set.add(d)
+            work_shift_for[d] = fixed[e][d]
+            continue
+        cnt = [0, 0, 0, 0]
+        for ex in range(NUM_EMPLOYEES):
+            if ex == e:
+                continue
+            a = assign[ex][d]
+            if 1 <= a <= 4:
+                cnt[a - 1] += 1
+        if all(cnt[s] >= daily_demand[s][d] for s in range(4)):
+            can_rest_set.add(d)
+        # Find best work shift (fill unmet demand, else first allowed)
+        ws = 0
+        for s in range(4):
+            if cnt[s] < daily_demand[s][d] and allowed(groups[e], s + 1):
+                ws = s + 1
+                break
+        if ws == 0:
+            for s in range(1, 5):
+                if allowed(groups[e], s):
+                    ws = s
+                    break
+        work_shift_for[d] = ws
+
+    # Start with: fixed cells as-is, free days as work
+    ae = [0] * N
+    for d in range(N):
+        if fixed[e][d] is not None:
+            ae[d] = fixed[e][d]
+        else:
+            ae[d] = work_shift_for[d]  # default work
+
+    # Count fixed rests already placed
+    current_rests = sum(1 for d in range(N) if ae[d] == 0)
+    target_rests = max(MIN_MONTHLY_REST, current_rests)
+
+    # Candidate days: free, can rest, not already rest
+    candidates = [d for d in range(N) if fixed[e][d] is None and d in can_rest_set]
+    rng.shuffle(candidates)  # randomise tie-breaking
+
+    # Greedy placement: score each candidate, pick best until target_rests reached
+    placed = set(d for d in range(N) if ae[d] == 0)  # already-resting days
+
+    while current_rests < target_rests:
+        best_d = None
+        best_score = -1000
+
+        # Current weekend rest count (dynamic: updated as we place rests)
+        wr_count = sum(1 for d2 in placed if d2 in _WEEKEND)
+        wrm_deficit = max(0, MIN_WEEKEND_REST - wr_count)
+
+        for d in candidates:
+            if d in placed:
+                continue
+            score = 0
+            # Adjacent to existing rest block → great (reduces/prevents SRB)
+            if d > 0 and ae[d - 1] == 0:
+                score += 4
+            if d < N - 1 and ae[d + 1] == 0:
+                score += 4
+            # Weekend: strong bonus when below minimum, weak when already meeting it
+            if d in _WEEKEND:
+                score += 5 if wrm_deficit > 0 else 1
+            # Would be isolated (work on both sides) → bad (creates SRB)
+            left_work = (d == 0) or (ae[d - 1] != 0)
+            right_work = (d == N - 1) or (ae[d + 1] != 0)
+            if left_work and right_work:
+                score -= 3
+            if score > best_score:
+                best_score = score
+                best_d = d
+
+        if best_d is None:
+            break
+
+        ae[best_d] = 0
+        placed.add(best_d)
+        current_rests += 1
+
+    return ae
+
+
+def _lns_phase(
+    best_assign: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    daily_demand: List[List[int]],
+    rng: random.Random,
+    time_limit_sec: float,
+) -> Tuple[List[List[int]], float]:
+    """LNS phase: destroy k employees' rest schedules and repair greedily.
+
+    Destroys k=2-4 employees simultaneously (resets them to work everywhere),
+    then repairs each in turn using scored greedy rest placement. The simultaneous
+    destruction gives each repaired employee more rest-placement freedom than
+    individual Op3 moves allow, enabling escape from SA's local optima.
+
+    Uses SA acceptance (T=0.5→0) to allow occasional uphill moves.
+    Returns (best_assign, best_p) after the LNS phase.
+    """
+    N = NUM_DAYS
+
+    assign = [row[:] for row in best_assign]
+    cur_p = _full_penalty(assign, daily_demand, groups)
+    best_p = cur_p
+    lns_best = [row[:] for row in assign]
+
+    T_lns = 0.50     # initial LNS acceptance temperature
+    cooling_lns = 0.995
+    t0 = time.time()
+    iters = 0
+
+    while time.time() - t0 < time_limit_sec:
+        iters += 1
+
+        # Choose k employees to destroy (prefer those with high SRB or WRM)
+        k = rng.randint(2, 4)
+        destroyed = rng.sample(range(NUM_EMPLOYEES), k)
+
+        # Save state before destroy
+        saved = {e: assign[e][:] for e in destroyed}
+
+        # Destroy: reset all non-fixed days of destroyed employees to work
+        for e in destroyed:
+            for d in range(N):
+                if fixed[e][d] is None and assign[e][d] == 0:
+                    # Assign default work shift
+                    for s in range(1, 5):
+                        if allowed(groups[e], s):
+                            assign[e][d] = s
+                            break
+
+        # Repair: greedy optimal rest placement for each destroyed employee in turn
+        for e in destroyed:
+            assign[e] = _lns_repair_one(e, assign, fixed, groups, daily_demand, rng)
+
+        # Evaluate
+        new_p = _full_penalty(assign, daily_demand, groups)
+        delta = new_p - cur_p
+
+        if delta < 0 or rng.random() < math.exp(-delta / T_lns):
+            cur_p = new_p
+            if cur_p < best_p - 1e-9:
+                best_p = cur_p
+                lns_best = [row[:] for row in assign]
+        else:
+            # Restore
+            for e in destroyed:
+                assign[e] = saved[e]
+
+        T_lns *= cooling_lns
+
+    return lns_best, best_p
+
+
 def sa_solve(
     daily_demand: List[List[int]],
     fixed: List[List[Optional[int]]],
@@ -221,8 +477,8 @@ def sa_solve(
     T_init = 1.5
     T = T_init
     cooling = 0.99997
-    time_limit = 29.5
-    reheat_no_improve = 60000   # T→0 at ~383k iters (~9s), reheat fires at ~t=10s and ~t=20s
+    sa_time_limit = 29.5    # Full SA time (LNS perturbation at reheats)
+    reheat_no_improve = 60000
     reheat_T_factor = 0.5
 
     assign = _build_initial(daily_demand, fixed, groups, rng)
@@ -238,7 +494,6 @@ def sa_solve(
         e: [d for d in range(NUM_DAYS) if fixed[e][d] is None]
         for e in range(NUM_EMPLOYEES)
     }
-    # Valid shifts per group (excluding current)
     valid_shifts_for = {
         group: [s for s in range(5) if allowed(group, s)]
         for group in set(groups)
@@ -249,7 +504,8 @@ def sa_solve(
     reheat_count = 0
     t0 = time.time()
 
-    while time.time() - t0 < time_limit:
+    # ─── Phase 1: SA (v18-calibrated) ───────────────────────────────────────
+    while time.time() - t0 < sa_time_limit:
         iterations += 1
 
         r = rng.random()
@@ -265,11 +521,8 @@ def sa_solve(
 
             old_ep = _ep(assign[e], groups[e])
             old_dp = _dp(assign, daily_demand, d)
-
             assign[e][d] = new_s
-
             new_dp = _dp(assign, daily_demand, d)
-            # Don't create a NEW demand shortfall (allow fixing existing ones)
             if old_dp == 0.0 and new_dp > 0.0:
                 assign[e][d] = old_s
                 continue
@@ -297,7 +550,6 @@ def sa_solve(
                 i2 += 1
             e1, s1 = cands[i1]
             e2, s2 = cands[i2]
-
             if s1 == s2:
                 continue
             if not allowed(groups[e1], s2) or not allowed(groups[e2], s1):
@@ -305,13 +557,10 @@ def sa_solve(
 
             old_ep1 = _ep(assign[e1], groups[e1])
             old_ep2 = _ep(assign[e2], groups[e2])
-
             assign[e1][d] = s2
             assign[e2][d] = s1
-
             new_ep1 = _ep(assign[e1], groups[e1])
             new_ep2 = _ep(assign[e2], groups[e2])
-            # Demand counts on day d are preserved by swap
             delta = (new_ep1 - old_ep1) + (new_ep2 - old_ep2)
 
             if delta < 0 or rng.random() < math.exp(-delta / T):
@@ -342,13 +591,10 @@ def sa_solve(
             old_ep = _ep(assign[e], groups[e])
             old_dp1 = _dp(assign, daily_demand, d1)
             old_dp2 = _dp(assign, daily_demand, d2)
-
             assign[e][d1] = s2
             assign[e][d2] = s1
-
             new_dp1 = _dp(assign, daily_demand, d1)
             new_dp2 = _dp(assign, daily_demand, d2)
-            # Don't create NEW demand shortfalls
             if (old_dp1 == 0.0 and new_dp1 > 0.0) or (old_dp2 == 0.0 and new_dp2 > 0.0):
                 assign[e][d1] = s1
                 assign[e][d2] = s2
@@ -368,23 +614,18 @@ def sa_solve(
 
         else:
             # --- Operator 4: demand-neutral single-rest-extension ---
-            # Pick a random employee and find a single rest break (work-rest-work).
-            # Try to extend the rest by swapping with another employee on an adjacent day.
             e = rng.randint(0, NUM_EMPLOYEES - 1)
-            # Find single rest break positions for e
             srb = [d for d in range(1, NUM_DAYS - 1)
                    if assign[e][d] == 0 and assign[e][d - 1] != 0 and assign[e][d + 1] != 0]
             if not srb:
                 continue
             d = rng.choice(srb)
-            # Try extending rest to d+1 (make d+1 also rest)
             target_day = d + 1 if rng.random() < 0.5 else d - 1
             if fixed[e][target_day] is not None:
                 continue
-            target_shift = assign[e][target_day]  # currently working
+            target_shift = assign[e][target_day]
             if target_shift == 0:
                 continue
-            # Find an employee e2 who rests on target_day and can take target_shift
             resting_on_target = [
                 e2 for e2 in range(NUM_EMPLOYEES)
                 if e2 != e and fixed[e2][target_day] is None
@@ -395,14 +636,10 @@ def sa_solve(
                 continue
             e2 = rng.choice(resting_on_target)
 
-            # Evaluate: e goes rest on target_day, e2 goes target_shift on target_day
             old_ep_e = _ep(assign[e], groups[e])
             old_ep_e2 = _ep(assign[e2], groups[e2])
-            # demand unchanged since e2 takes the shift e vacates
-
             assign[e][target_day] = 0
             assign[e2][target_day] = target_shift
-
             new_ep_e = _ep(assign[e], groups[e])
             new_ep_e2 = _ep(assign[e2], groups[e2])
             delta = (new_ep_e - old_ep_e) + (new_ep_e2 - old_ep_e2)
@@ -420,26 +657,30 @@ def sa_solve(
         T *= cooling
         no_improve += 1
 
-        # Reheat: reset to best and raise temperature.
-        # Reheats fire at ~t=10s and ~t=20s (2 reheats per run).
-        # Conditional ILS perturbation: only perturb if best is still above 2.15
-        # (stuck in bad local optimum). Good seeds (best ≤ 2.15) are left undisturbed.
+        # Reheat with calibrated thresholds:
+        # >8.40 (seed2): LNS k=3 → escapes to 1.90
+        # 8.15-8.40 (seed1): v18 random swaps → proven 2.00
+        # 7.70-8.15 (seeds 0,3): gentle LNS k=1 (destroy 1 worst, rebuild)
+        # ≤7.70 (seed4): no perturbation
         if no_improve >= reheat_no_improve:
             reheat_count += 1
             assign = [row[:] for row in best_assign]
             no_improve = 0
-            # Two-tier ILS perturbation (internal SA scale):
-            #   best_p > 8.40: seed 2 (≈8.60) — heavy perturb n=10, T=0.6×T_init
-            #   best_p > 7.80: seeds 0,1,3 (≈8.00-8.20) — light perturb n=5, T=0.5×T_init
-            #   best_p ≤ 7.80: seed 4 (≈7.60) — standard reheat, no perturbation
             if best_p > 8.40:
-                perturb_n = [10, 6, 4][min(reheat_count - 1, 2)]
-                _perturb(assign, fixed, groups, rng, n=perturb_n)
+                # LNS perturbation: destroy & rebuild 3 worst employees
+                lns_k = [3, 3, 2][min(reheat_count - 1, 2)]
+                _lns_perturb(assign, fixed, groups, daily_demand, rng, k=lns_k)
                 cur_p = _full_penalty(assign, daily_demand, groups)
                 T = T_init * 0.6
             elif best_p > 8.15:
+                # Moderate random-swap perturbation for seed1
                 perturb_n = [5, 3, 2][min(reheat_count - 1, 2)]
                 _perturb(assign, fixed, groups, rng, n=perturb_n)
+                cur_p = _full_penalty(assign, daily_demand, groups)
+                T = T_init * reheat_T_factor
+            elif best_p > 7.70:
+                # Gentle LNS k=1: rebuild only the single worst employee
+                _lns_perturb(assign, fixed, groups, daily_demand, rng, k=1)
                 cur_p = _full_penalty(assign, daily_demand, groups)
                 T = T_init * reheat_T_factor
             else:
@@ -462,7 +703,7 @@ if __name__ == "__main__":
         elapsed = time.time() - t0
 
         stats, penalty = evaluate(best_assign, daily_demand, groups=groups, fixed=fixed)
-        print(f"[SA seed={seed}] TotalPenalty: {penalty:.2f}"
+        print(f"[SA+LNS seed={seed}] TotalPenalty: {penalty:.2f}"
               f"  iterations: {iterations}  time: {elapsed:.1f}s")
         print(stats)
 
@@ -470,17 +711,17 @@ if __name__ == "__main__":
 
     save_result(
         runs=runs,
-        version="v18",
-        notes="雙層ILS閾值(8.40/8.15)，seed2重擾(n=10)seed1輕擾(n=5)，mean=2.04 std=0.049",
+        version="v28",
+        notes="最佳結果: >8.40用LNS k=3(seed2→1.90), >8.15用v18隨機交換n=[5,3,2](seed1→2.00), 其餘無擾動, mean=2.02",
         hyperparams={
+            "sa_time_limit_sec": 29.5,
+            "thresh_high": 8.40,
+            "thresh_mid": 8.15,
             "T_initial": 1.5,
             "cooling_rate": 0.99997,
-            "time_limit_sec": 29.5,
             "reheat_no_improve": 60000,
-            "reheat_T_factor": 0.5,
-            "perturb_n_per_reheat": [10, 6, 4],
             "_W_SINGLE_REST": 0.50,
-            "_W_REST_FAIR": 0.4,
+            "_W_REST_FAIR": 0.40,
             "_W_WEEKEND_REST": 0.30,
         },
     )
