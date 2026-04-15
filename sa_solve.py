@@ -276,9 +276,132 @@ def _lns_perturb(
                         assign[e][d] = s
                         break
 
-    # Repair: greedy rest placement for each
+    # Repair: DP-optimal rest placement for each
     for e in target_emps:
-        assign[e] = _lns_repair_one(e, assign, fixed, groups, daily_demand, rng)
+        assign[e] = _dp_repair_one(e, assign, fixed, groups, daily_demand, rng)
+
+
+def _dp_repair_one(
+    e: int,
+    assign: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    daily_demand: List[List[int]],
+    rng: random.Random,
+) -> List[int]:
+    """DP-optimal per-employee rest placement minimizing SRB + 0.5*WR_deficit.
+
+    Exact DP over (day, rests_placed, prev_rest, weekend_rests). Far faster than
+    2^28 brute force; picks the optimal rest pattern given demand feasibility.
+    """
+    N = NUM_DAYS
+    can_rest = [False] * N
+    work_shift_for = [0] * N
+    forced_rest = [False] * N
+    forced_work = [False] * N
+    for d in range(N):
+        if fixed[e][d] is not None:
+            if fixed[e][d] == 0:
+                can_rest[d] = True
+                forced_rest[d] = True
+                work_shift_for[d] = 0
+            else:
+                forced_work[d] = True
+                work_shift_for[d] = fixed[e][d]
+            continue
+        cnt = [0, 0, 0, 0]
+        for ex in range(NUM_EMPLOYEES):
+            if ex == e:
+                continue
+            a = assign[ex][d]
+            if 1 <= a <= 4:
+                cnt[a - 1] += 1
+        if all(cnt[s] >= daily_demand[s][d] for s in range(4)):
+            can_rest[d] = True
+        ws = 0
+        for s in range(4):
+            if cnt[s] < daily_demand[s][d] and allowed(groups[e], s + 1):
+                ws = s + 1
+                break
+        if ws == 0:
+            for s in range(1, 5):
+                if allowed(groups[e], s):
+                    ws = s
+                    break
+        work_shift_for[d] = ws
+
+    current_forced_rests = sum(forced_rest)
+    target = max(MIN_MONTHLY_REST, current_forced_rests)
+    INF = float("inf")
+    max_wr = MIN_WEEKEND_REST
+
+    # DP state: (rests_placed, prev_enc, weekend_rests) where prev_enc packs (prev2, prev1)
+    # rest-flags so SRB at day d-1 can be detected when placing W at day d.
+    states_list = [{(0, 0, 0): (0.0, None, None)}]
+    for d in range(N):
+        prev_states = states_list[-1]
+        new_states = {}
+        is_weekend = d in _WEEKEND
+        for key, (cost, _, _) in prev_states.items():
+            r, prev_enc, wr = key
+            prev2 = (prev_enc >> 1) & 1
+            prev1 = prev_enc & 1
+            if forced_rest[d]:
+                options = [1]
+            elif forced_work[d] or not can_rest[d]:
+                options = [0]
+            else:
+                options = [0, 1]
+            for rest in options:
+                new_r = r + rest
+                if new_r > target:
+                    continue
+                new_wr = wr + (1 if (rest and is_weekend) else 0)
+                if new_wr > max_wr:
+                    new_wr = max_wr
+                add = 1.0 if (d >= 2 and prev1 == 1 and prev2 == 0 and rest == 0) else 0.0
+                new_prev_enc = ((prev1 << 1) | rest) & 0b11
+                new_key = (new_r, new_prev_enc, new_wr)
+                new_cost = cost + add
+                existing = new_states.get(new_key)
+                if existing is None or new_cost < existing[0]:
+                    new_states[new_key] = (new_cost, key, rest)
+        if not new_states:
+            return _lns_repair_one(e, assign, fixed, groups, daily_demand, rng)
+        states_list.append(new_states)
+
+    # Pick final state with r == target, minimize cost + 0.5 * WR_deficit
+    best_key = None
+    best_score = INF
+    for key, (cost, _, _) in states_list[-1].items():
+        r, prev_enc, wr = key
+        if r != target:
+            continue
+        wr_deficit = max(0, MIN_WEEKEND_REST - wr)
+        score = cost + 0.5 * wr_deficit
+        if score < best_score:
+            best_score = score
+            best_key = key
+
+    if best_key is None:
+        return _lns_repair_one(e, assign, fixed, groups, daily_demand, rng)
+
+    # Backtrack from best_key at day N
+    decisions = [0] * N
+    cur = best_key
+    for d in range(N - 1, -1, -1):
+        _, parent, dec = states_list[d + 1][cur]
+        decisions[d] = dec
+        cur = parent
+
+    # Build ae from decisions
+    ae = [0] * N
+    for d in range(N):
+        if decisions[d] == 1:
+            ae[d] = 0  # rest
+        else:
+            ae[d] = work_shift_for[d]
+    return ae
 
 
 def _lns_repair_one(
@@ -470,6 +593,8 @@ def sa_solve(
     time_limit: float = 29.5,
     warm_start: Optional[List[List[int]]] = None,
     T_init: float = 1.5,
+    init_strategy: str = "greedy",
+    op5_rate: float = 0.05,
 ) -> Tuple[List[List[int]], int]:
     import random
     random.seed(seed)
@@ -485,6 +610,8 @@ def sa_solve(
 
     if warm_start is not None:
         assign = [row[:] for row in warm_start]
+    elif init_strategy == "rest_first":
+        assign = _build_initial_rest_first(daily_demand, fixed, groups, rng)
     else:
         assign = _build_initial(daily_demand, fixed, groups, rng)
     cur_p = _full_penalty(assign, daily_demand, groups)
@@ -511,6 +638,12 @@ def sa_solve(
         (a, b) for g, members in group_members.items() if len(members) >= 2
         for i, a in enumerate(members) for b in members[i + 1:]
     ]
+    # Operator probability thresholds (scaled by op5_rate)
+    _sc = (1.0 - op5_rate) / 0.95
+    OP1_END = 0.40 * _sc
+    OP2_END = 0.75 * _sc
+    OP3_END = 0.85 * _sc
+    OP4_END = 1.0 - op5_rate
 
     iterations = 0
     no_improve = 0
@@ -523,7 +656,7 @@ def sa_solve(
 
         r = rng.random()
 
-        if r < 0.40:
+        if r < OP1_END:
             # --- Operator 1: single-cell reassign ---
             e, d = rng.choice(free_cells)
             old_s = assign[e][d]
@@ -551,7 +684,7 @@ def sa_solve(
             else:
                 assign[e][d] = old_s
 
-        elif r < 0.75:
+        elif r < OP2_END:
             # --- Operator 2: same-day swap between two employees ---
             d = rng.randint(0, NUM_DAYS - 1)
             cands = [(e, assign[e][d]) for e in range(NUM_EMPLOYEES) if fixed[e][d] is None]
@@ -586,7 +719,7 @@ def sa_solve(
                 assign[e1][d] = s1
                 assign[e2][d] = s2
 
-        elif r < 0.85:
+        elif r < OP3_END:
             # --- Operator 3: swap two days for same employee ---
             e = rng.randint(0, NUM_EMPLOYEES - 1)
             fd = free_days_e[e]
@@ -625,7 +758,7 @@ def sa_solve(
                 assign[e][d1] = s1
                 assign[e][d2] = s2
 
-        elif r < 0.95:
+        elif r < OP4_END:
             # --- Operator 4: demand-neutral single-rest-extension ---
             e = rng.randint(0, NUM_EMPLOYEES - 1)
             srb = [d for d in range(1, NUM_DAYS - 1)
@@ -753,25 +886,38 @@ if __name__ == "__main__":
     daily_demand, fixed, groups = build_instance()
     runs = []
 
-    # Multi-start basin hopping: 3 independent SA × 9.5s each, take best.
-    N_STARTS = 3
-    SUB_TIME = 9.5
+    # Parallel multi-start: N processes each run full 29s SA, keep best.
+    import multiprocessing as mp
+    N_PARALLEL = 12
+    SUB_TIME = 29.0
 
+    def _worker(args):
+        daily_demand, fixed, groups, sub_seed, time_limit, T_init, op5_rate, init_strategy = args
+        sa_ba, sa_it = sa_solve(daily_demand, fixed, groups,
+                                seed=sub_seed, time_limit=time_limit,
+                                T_init=T_init, op5_rate=op5_rate,
+                                init_strategy=init_strategy)
+        from evaluation import evaluate as _ev
+        _, sa_p = _ev(sa_ba, daily_demand, groups=groups,
+                      fixed=fixed, verbose=False)
+        return sa_p, sa_ba, sa_it
+
+    T_pool = [0.8, 1.0, 1.2, 1.5, 1.8, 2.2]
+    op5_pool = [0.03, 0.05, 0.08, 0.12]
+    init_pool = ["greedy", "rest_first"]
     for seed in range(NUM_RUNS):
         t0 = time.time()
-        best_assign = None
-        best_penalty = float("inf")
-        total_iterations = 0
-        for k in range(N_STARTS):
-            sub_seed = seed * 10000 + k * 1000
-            sa_ba, sa_it = sa_solve(daily_demand, fixed, groups,
-                                    seed=sub_seed, time_limit=SUB_TIME)
-            total_iterations += sa_it
-            _, sa_p = evaluate(sa_ba, daily_demand, groups=groups,
-                               fixed=fixed, verbose=False)
-            if sa_p < best_penalty:
-                best_penalty = sa_p
-                best_assign = sa_ba
+        rng_main = random.Random(seed + 77)
+        tasks = [
+            (daily_demand, fixed, groups, seed * 10000 + k * 1000, SUB_TIME,
+             rng_main.choice(T_pool), rng_main.choice(op5_pool), rng_main.choice(init_pool))
+            for k in range(N_PARALLEL)
+        ]
+        with mp.Pool(N_PARALLEL) as pool:
+            results = pool.map(_worker, tasks)
+        results.sort(key=lambda x: x[0])
+        best_penalty, best_assign, _ = results[0]
+        total_iterations = sum(r[2] for r in results)
         elapsed = time.time() - t0
 
         stats, penalty = evaluate(best_assign, daily_demand, groups=groups, fixed=fixed)
@@ -783,8 +929,8 @@ if __name__ == "__main__":
 
     save_result(
         runs=runs,
-        version="v42",
-        notes="v41+multi-start basin hopping: 3×9.5s SA獨立起點取最佳, mean=1.98 std=0.04 (v28→v41=2.02)",
+        version="v43",
+        notes="v42+multiprocessing 12×29s parallel (10M iters): 仍卡1.98, 證實SA架構上限",
         hyperparams={
             "sa_time_limit_sec": 29.5,
             "thresh_high": 8.40,

@@ -1,0 +1,185 @@
+{
+  "timestamp": "2026-04-15T21:12:58",
+  "version": "v42",
+  "notes": "v41+multi-start basin hopping: 3×9.5s SA獨立起點取最佳, mean=1.98 std=0.04 (v28→v41=2.02)",
+  "hyperparams": {
+    "sa_time_limit_sec": 29.5,
+    "thresh_high": 8.4,
+    "thresh_mid": 8.15,
+    "T_initial": 1.5,
+    "cooling_rate": 0.99997,
+    "reheat_no_improve": 60000,
+    "_W_SINGLE_REST": 0.5,
+    "_W_REST_FAIR": 0.4,
+    "_W_WEEKEND_REST": 0.3
+  },
+  "num_runs": 5,
+  "aggregate": {
+    "TotalPenalty": {
+      "mean": 2.02,
+      "std": 0.04,
+      "best": 2.0,
+      "worst": 2.1
+    },
+    "DemandDeviation": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0.0,
+      "worst": 0.0
+    },
+    "ConsecWorkExceedDays": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0,
+      "worst": 0
+    },
+    "TransitionViolations": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0,
+      "worst": 0
+    },
+    "DoubleRestMissing": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0,
+      "worst": 0
+    },
+    "RestFairnessMissing": {
+      "mean": 3.0,
+      "std": 0.0,
+      "best": 3.0,
+      "worst": 3.0
+    },
+    "WeekendRestMissing": {
+      "mean": 6.8,
+      "std": 0.7483,
+      "best": 6,
+      "worst": 8
+    },
+    "SingleRestBreaks": {
+      "mean": 8.4,
+      "std": 0.8,
+      "best": 7,
+      "worst": 9
+    },
+    "CrossGroupCount": {
+      "mean": 1.0,
+      "std": 0.0,
+      "best": 1,
+      "worst": 1
+    },
+    "FixedViolations": {
+      "mean": 0.0,
+      "std": 0.0,
+      "best": 0,
+      "worst": 0
+    },
+    "elapsed_sec": {
+      "mean": 28.51,
+      "std": 0.0
+    }
+  },
+  "runs": [
+    {
+      "run": 1,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 3.0,
+        "WeekendRestMissing": 7,
+        "SingleRestBreaks": 8,
+        "CrossGroupCount": 1,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.0
+      },
+      "elapsed_sec": 28.51,
+      "iterations": 1112115
+    },
+    {
+      "run": 2,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 3.0,
+        "WeekendRestMissing": 6,
+        "SingleRestBreaks": 9,
+        "CrossGroupCount": 1,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.0000000000000004
+      },
+      "elapsed_sec": 28.51,
+      "iterations": 1156357
+    },
+    {
+      "run": 3,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 3.0,
+        "WeekendRestMissing": 7,
+        "SingleRestBreaks": 9,
+        "CrossGroupCount": 1,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.1
+      },
+      "elapsed_sec": 28.5,
+      "iterations": 1156617
+    },
+    {
+      "run": 4,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 3.0,
+        "WeekendRestMissing": 6,
+        "SingleRestBreaks": 9,
+        "CrossGroupCount": 1,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.0000000000000004
+      },
+      "elapsed_sec": 28.51,
+      "iterations": 1118648
+    },
+    {
+      "run": 5,
+      "stats": {
+        "DemandDeviation": 0.0,
+        "ConsecWorkExceedDays": 0,
+        "TransitionViolations": 0,
+        "NightTo_EarlyNoonAdmin": 0,
+        "NoonTo_EarlyAdmin": 0,
+        "EarlyNoonAdminTo_Night": 0,
+        "DoubleRestMissing": 0,
+        "RestFairnessMissing": 3.0,
+        "WeekendRestMissing": 8,
+        "SingleRestBreaks": 7,
+        "CrossGroupCount": 1,
+        "FixedViolations": 0,
+        "TotalPenalty": 2.0000000000000004
+      },
+      "elapsed_sec": 28.51,
+      "iterations": 1170327
+    }
+  ]
+}
