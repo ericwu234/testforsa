@@ -467,6 +467,9 @@ def sa_solve(
     fixed: List[List[Optional[int]]],
     groups: List[str],
     seed: int = 0,
+    time_limit: float = 29.5,
+    warm_start: Optional[List[List[int]]] = None,
+    T_init: float = 1.5,
 ) -> Tuple[List[List[int]], int]:
     import random
     random.seed(seed)
@@ -474,14 +477,16 @@ def sa_solve(
     rng = random.Random(seed)
 
     # Hyperparameters
-    T_init = 1.5
     T = T_init
     cooling = 0.99997
-    sa_time_limit = 29.5    # Full SA time (LNS perturbation at reheats)
+    sa_time_limit = time_limit
     reheat_no_improve = 60000
     reheat_T_factor = 0.5
 
-    assign = _build_initial(daily_demand, fixed, groups, rng)
+    if warm_start is not None:
+        assign = [row[:] for row in warm_start]
+    else:
+        assign = _build_initial(daily_demand, fixed, groups, rng)
     cur_p = _full_penalty(assign, daily_demand, groups)
 
     best_assign = [row[:] for row in assign]
@@ -498,6 +503,14 @@ def sa_solve(
         group: [s for s in range(5) if allowed(group, s)]
         for group in set(groups)
     }
+    # Same-group pairs for Op5 segment swap (demand-preserving)
+    group_members = {}
+    for e, g in enumerate(groups):
+        group_members.setdefault(g, []).append(e)
+    same_group_pairs = [
+        (a, b) for g, members in group_members.items() if len(members) >= 2
+        for i, a in enumerate(members) for b in members[i + 1:]
+    ]
 
     iterations = 0
     no_improve = 0
@@ -510,7 +523,7 @@ def sa_solve(
 
         r = rng.random()
 
-        if r < 0.45:
+        if r < 0.40:
             # --- Operator 1: single-cell reassign ---
             e, d = rng.choice(free_cells)
             old_s = assign[e][d]
@@ -538,7 +551,7 @@ def sa_solve(
             else:
                 assign[e][d] = old_s
 
-        elif r < 0.80:
+        elif r < 0.75:
             # --- Operator 2: same-day swap between two employees ---
             d = rng.randint(0, NUM_DAYS - 1)
             cands = [(e, assign[e][d]) for e in range(NUM_EMPLOYEES) if fixed[e][d] is None]
@@ -573,7 +586,7 @@ def sa_solve(
                 assign[e1][d] = s1
                 assign[e2][d] = s2
 
-        elif r < 0.90:
+        elif r < 0.85:
             # --- Operator 3: swap two days for same employee ---
             e = rng.randint(0, NUM_EMPLOYEES - 1)
             fd = free_days_e[e]
@@ -612,7 +625,7 @@ def sa_solve(
                 assign[e][d1] = s1
                 assign[e][d2] = s2
 
-        else:
+        elif r < 0.95:
             # --- Operator 4: demand-neutral single-rest-extension ---
             e = rng.randint(0, NUM_EMPLOYEES - 1)
             srb = [d for d in range(1, NUM_DAYS - 1)
@@ -653,6 +666,49 @@ def sa_solve(
             else:
                 assign[e][target_day] = target_shift
                 assign[e2][target_day] = 0
+
+        else:
+            # --- Operator 5: same-group segment swap (demand-preserving) ---
+            if not same_group_pairs:
+                T *= cooling
+                no_improve += 1
+                continue
+            e1, e2 = rng.choice(same_group_pairs)
+            w = rng.randint(3, 10)
+            d_start = rng.randint(0, NUM_DAYS - w)
+            # Reject if any fixed cells in the segment for either employee
+            has_fixed = False
+            for dd in range(d_start, d_start + w):
+                if fixed[e1][dd] is not None or fixed[e2][dd] is not None:
+                    has_fixed = True
+                    break
+            if has_fixed:
+                T *= cooling
+                no_improve += 1
+                continue
+            # Quick check: segments differ at least somewhere
+            if all(assign[e1][dd] == assign[e2][dd] for dd in range(d_start, d_start + w)):
+                T *= cooling
+                no_improve += 1
+                continue
+
+            old_ep1 = _ep(assign[e1], groups[e1])
+            old_ep2 = _ep(assign[e2], groups[e2])
+            for dd in range(d_start, d_start + w):
+                assign[e1][dd], assign[e2][dd] = assign[e2][dd], assign[e1][dd]
+            new_ep1 = _ep(assign[e1], groups[e1])
+            new_ep2 = _ep(assign[e2], groups[e2])
+            delta = (new_ep1 - old_ep1) + (new_ep2 - old_ep2)
+
+            if delta < 0 or rng.random() < math.exp(-delta / T):
+                cur_p += delta
+                if cur_p < best_p - 1e-9:
+                    best_p = cur_p
+                    best_assign = [row[:] for row in assign]
+                    no_improve = 0
+            else:
+                for dd in range(d_start, d_start + w):
+                    assign[e1][dd], assign[e2][dd] = assign[e2][dd], assign[e1][dd]
 
         T *= cooling
         no_improve += 1
@@ -697,22 +753,38 @@ if __name__ == "__main__":
     daily_demand, fixed, groups = build_instance()
     runs = []
 
+    # Multi-start basin hopping: 3 independent SA × 9.5s each, take best.
+    N_STARTS = 3
+    SUB_TIME = 9.5
+
     for seed in range(NUM_RUNS):
         t0 = time.time()
-        best_assign, iterations = sa_solve(daily_demand, fixed, groups, seed=seed)
+        best_assign = None
+        best_penalty = float("inf")
+        total_iterations = 0
+        for k in range(N_STARTS):
+            sub_seed = seed * 10000 + k * 1000
+            sa_ba, sa_it = sa_solve(daily_demand, fixed, groups,
+                                    seed=sub_seed, time_limit=SUB_TIME)
+            total_iterations += sa_it
+            _, sa_p = evaluate(sa_ba, daily_demand, groups=groups,
+                               fixed=fixed, verbose=False)
+            if sa_p < best_penalty:
+                best_penalty = sa_p
+                best_assign = sa_ba
         elapsed = time.time() - t0
 
         stats, penalty = evaluate(best_assign, daily_demand, groups=groups, fixed=fixed)
-        print(f"[SA+LNS seed={seed}] TotalPenalty: {penalty:.2f}"
-              f"  iterations: {iterations}  time: {elapsed:.1f}s")
+        print(f"[SA-MS seed={seed}] TotalPenalty: {penalty:.2f}"
+              f"  iterations: {total_iterations}  time: {elapsed:.1f}s")
         print(stats)
 
-        runs.append((stats, elapsed, iterations))
+        runs.append((stats, elapsed, total_iterations))
 
     save_result(
         runs=runs,
-        version="v28",
-        notes="最佳結果: >8.40用LNS k=3(seed2→1.90), >8.15用v18隨機交換n=[5,3,2](seed1→2.00), 其餘無擾動, mean=2.02",
+        version="v42",
+        notes="v41+multi-start basin hopping: 3×9.5s SA獨立起點取最佳, mean=1.98 std=0.04 (v28→v41=2.02)",
         hyperparams={
             "sa_time_limit_sec": 29.5,
             "thresh_high": 8.40,
