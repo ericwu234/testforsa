@@ -276,8 +276,54 @@ def _lns_perturb(
                         assign[e][d] = s
                         break
 
-    # Repair: DP-optimal rest placement for each
+    # Repair: DP-optimal rest placement for each (WR-deficit-priority order)
+    priority = []
     for e in target_emps:
+        wr = sum(1 for d in range(NUM_DAYS) if assign[e][d] == 0 and d in _WEEKEND)
+        priority.append((max(0, MIN_WEEKEND_REST - wr) + rng.random() * 0.01, e))
+    priority.sort(reverse=True)
+    for _s, e in priority:
+        assign[e] = _dp_repair_one(e, assign, fixed, groups, daily_demand, rng)
+
+
+def _group_joint_repair(
+    assign: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    daily_demand: List[List[int]],
+    rng: random.Random,
+) -> None:
+    """Destroy all emps in a randomly picked group and jointly DP-repair.
+
+    Breaks mutual deadlock where each emp's can_rest is blocked by others in
+    the same group. By clearing them all, weekend slots open up.
+    """
+    group_members = {}
+    for e, g in enumerate(groups):
+        group_members.setdefault(g, []).append(e)
+    # Pick a group with ≥2 members
+    candidates = [g for g, mem in group_members.items() if len(mem) >= 2]
+    if not candidates:
+        return
+    g = rng.choice(candidates)
+    target_emps = group_members[g]
+
+    # Destroy all emps in group: reset non-fixed cells to valid work shift
+    for e in target_emps:
+        for d in range(NUM_DAYS):
+            if fixed[e][d] is None:
+                for s in range(1, 5):
+                    if allowed(groups[e], s):
+                        assign[e][d] = s
+                        break
+
+    # Repair in WR-deficit priority
+    priority = []
+    for e in target_emps:
+        wr = sum(1 for d in range(NUM_DAYS) if assign[e][d] == 0 and d in _WEEKEND)
+        priority.append((max(0, MIN_WEEKEND_REST - wr) + rng.random() * 0.01, e))
+    priority.sort(reverse=True)
+    for _s, e in priority:
         assign[e] = _dp_repair_one(e, assign, fixed, groups, daily_demand, rng)
 
 
@@ -873,8 +919,6 @@ def sa_solve(
                 cur_p = _full_penalty(assign, daily_demand, groups)
                 T = T_init * reheat_T_factor
             else:
-                # Deep LNS + full DP sweep: destroy k=3 worst, DP-repair;
-                # then iterate DP over all 16 employees in random order (coord descent)
                 _lns_perturb(assign, fixed, groups, daily_demand, rng, k=3)
                 for _sweep in range(2):
                     emp_order = list(range(NUM_EMPLOYEES))
@@ -883,6 +927,26 @@ def sa_solve(
                         assign[e] = _dp_repair_one(e, assign, fixed, groups, daily_demand, rng)
                 cur_p = _full_penalty(assign, daily_demand, groups)
                 T = T_init * reheat_T_factor
+
+    # Post-SA DP polish: coord-descent DP-repair until converged
+    polish_assign = [row[:] for row in best_assign]
+    prev_p = best_p
+    for _round in range(10):
+        # Repair highest WR-deficit emps first so they claim scarce weekend slots
+        wr_def = []
+        for e in range(NUM_EMPLOYEES):
+            wr = sum(1 for d in range(NUM_DAYS) if polish_assign[e][d] == 0 and d in _WEEKEND)
+            wr_def.append((max(0, MIN_WEEKEND_REST - wr) + rng.random() * 0.01, e))
+        wr_def.sort(reverse=True)
+        for _s, e in wr_def:
+            polish_assign[e] = _dp_repair_one(e, polish_assign, fixed, groups, daily_demand, rng)
+        new_p = _full_penalty(polish_assign, daily_demand, groups)
+        if new_p < best_p:
+            best_p = new_p
+            best_assign = [row[:] for row in polish_assign]
+        if new_p >= prev_p:
+            break
+        prev_p = new_p
 
     return best_assign, iterations
 
