@@ -873,7 +873,15 @@ def sa_solve(
                 cur_p = _full_penalty(assign, daily_demand, groups)
                 T = T_init * reheat_T_factor
             else:
-                cur_p = best_p
+                # Deep LNS + full DP sweep: destroy k=3 worst, DP-repair;
+                # then iterate DP over all 16 employees in random order (coord descent)
+                _lns_perturb(assign, fixed, groups, daily_demand, rng, k=3)
+                for _sweep in range(2):
+                    emp_order = list(range(NUM_EMPLOYEES))
+                    rng.shuffle(emp_order)
+                    for e in emp_order:
+                        assign[e] = _dp_repair_one(e, assign, fixed, groups, daily_demand, rng)
+                cur_p = _full_penalty(assign, daily_demand, groups)
                 T = T_init * reheat_T_factor
 
     return best_assign, iterations
