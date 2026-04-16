@@ -208,6 +208,178 @@ def _build_initial_rest_first(
     return assign
 
 
+def _build_initial_explicit_weekend(
+    daily_demand: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    rng: random.Random,
+) -> List[List[int]]:
+    """Init with explicit weekend rest planning to achieve WR_miss=4 (structural min).
+
+    Morning group (7 emps): round-robin assign 3 rests per weekend day.
+    Admin/MorningOrAdmin: alternate coverage so each gets ≥3 WR.
+    Night group: round-robin 1 rest per weekend day.
+    Noon group: round-robin 2 rests per weekend day.
+    Then DP-repair weekday rests, then SA refines.
+    """
+    N = NUM_DAYS
+    assign = [[0] * N for _ in range(NUM_EMPLOYEES)]
+
+    # Apply fixed assignments
+    for e in range(NUM_EMPLOYEES):
+        for d in range(N):
+            if fixed[e][d] is not None:
+                assign[e][d] = fixed[e][d]
+
+    wknd_list = sorted(_WEEKEND)
+    rng.shuffle(wknd_list)
+
+    # Group members
+    group_members: dict = {}
+    for e, g in enumerate(groups):
+        group_members.setdefault(g, []).append(e)
+
+    # -- Admin / MorningOrAdmin coordination --
+    mor_adm = group_members.get("MorningOrAdmin", [])
+    adm_only = group_members.get("Admin", [])
+    if mor_adm and adm_only:
+        # Alternate: on first half e0 rests (e15 works admin), second half e15 rests (e0 works admin)
+        half = len(wknd_list) // 2
+        for i, d in enumerate(wknd_list):
+            if fixed[mor_adm[0]][d] is not None:
+                continue
+            if i < half:
+                assign[mor_adm[0]][d] = 0    # e0 rests (e15 covers admin below)
+            else:
+                assign[mor_adm[0]][d] = 4    # e0 works admin (e15 can rest below)
+        for i, d in enumerate(wknd_list):
+            if fixed[adm_only[0]][d] is not None:
+                continue
+            if i < half:
+                assign[adm_only[0]][d] = 4   # e15 works admin (covers when e0 rests)
+            else:
+                assign[adm_only[0]][d] = 0   # e15 rests (e0 covers admin)
+
+    # -- Morning group (e1-6): round-robin 3 rests per weekend day --
+    morning = group_members.get("Morning", [])
+    if morning:
+        rng.shuffle(morning)
+        for i, d in enumerate(wknd_list):
+            # 3 emps rest on this day: cycle through morning list
+            rest_set = set()
+            for j in range(3):
+                rest_set.add(morning[(i * 3 + j) % len(morning)])
+            for e in morning:
+                if fixed[e][d] is None:
+                    assign[e][d] = 0 if e in rest_set else 1  # rest or morning
+
+    # -- Night group (e12-14): round-robin 1 rest per weekend day --
+    night = group_members.get("Night", [])
+    if night:
+        rng.shuffle(night)
+        for i, d in enumerate(wknd_list):
+            rest_e = night[i % len(night)]
+            for e in night:
+                if fixed[e][d] is None:
+                    assign[e][d] = 0 if e == rest_e else 3  # rest or night
+
+    # -- Noon group (e7-11): round-robin 2 rests per weekend day --
+    noon = group_members.get("Noon", [])
+    if noon:
+        rng.shuffle(noon)
+        for i, d in enumerate(wknd_list):
+            rest_set = set()
+            for j in range(min(2, len(noon))):
+                rest_set.add(noon[(i * 2 + j) % len(noon)])
+            for e in noon:
+                if fixed[e][d] is None:
+                    assign[e][d] = 0 if e in rest_set else 2  # rest or noon
+
+    # Fill non-weekend, non-fixed days with valid work shift
+    for e in range(NUM_EMPLOYEES):
+        for d in range(N):
+            if assign[e][d] == 0 and fixed[e][d] is None and d not in _WEEKEND:
+                for s in range(1, 5):
+                    if allowed(groups[e], s):
+                        assign[e][d] = s
+                        break
+
+    # DP-repair weekday rests (WR-deficit priority)
+    for _sweep in range(3):
+        wr_def = []
+        for e in range(NUM_EMPLOYEES):
+            wr = sum(1 for d in range(N) if assign[e][d] == 0 and d in _WEEKEND)
+            wr_def.append((max(0, MIN_WEEKEND_REST - wr) + rng.random() * 0.01, e))
+        wr_def.sort(reverse=True)
+        for _sc, e in wr_def:
+            assign[e] = _dp_repair_one(e, assign, fixed, groups, daily_demand, rng)
+
+    return assign
+
+
+def _build_initial_dp_balanced(
+    daily_demand: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    rng: random.Random,
+) -> List[List[int]]:
+    """Init: all emps work, then DP-repair in WR-deficit-priority order.
+
+    Emps with highest WR deficit (no weekend rests yet) are repaired first so
+    they claim weekend rest slots before group peers lock them out.
+    """
+    # Start: all non-fixed days set to valid work shift
+    assign = [[0] * NUM_DAYS for _ in range(NUM_EMPLOYEES)]
+    for e in range(NUM_EMPLOYEES):
+        for d in range(NUM_DAYS):
+            if fixed[e][d] is not None:
+                assign[e][d] = fixed[e][d]
+            else:
+                for s in range(1, 5):
+                    if allowed(groups[e], s):
+                        assign[e][d] = s
+                        break
+
+    # Pre-plan: MorningOrAdmin / Admin-only weekend coordination.
+    # Force Admin-only emps to rest on half the weekends so MorningOrAdmin emps
+    # see unmet admin demand and pick admin shift; then Admin-only DP sees coverage.
+    admin_only_emps = [e for e in range(NUM_EMPLOYEES) if groups[e] == "Admin"]
+    if admin_only_emps:
+        wknd_list = sorted(_WEEKEND)
+        rng.shuffle(wknd_list)
+        # Force Admin-only to rest on first 5 weekends (demand temporarily violated)
+        for d in wknd_list[:5]:
+            for e in admin_only_emps:
+                if fixed[e][d] is None:
+                    assign[e][d] = 0  # rest (demand may be violated temporarily)
+
+    # DP-repair: multiple sweeps with smart ordering.
+    # Sweep 0: repair non-Admin-only groups first (Morning, Noon, Night, MorningOrAdmin),
+    # then Admin-only last so e15 can use weekend slots freed by e0's admin shifts.
+    # Subsequent sweeps: WR-deficit priority.
+    for _sweep in range(3):
+        if _sweep == 0:
+            # Non-Admin-only first (by WR deficit), then Admin-only last
+            non_admin = [e for e in range(NUM_EMPLOYEES) if groups[e] != "Admin"]
+            admin_only = [e for e in range(NUM_EMPLOYEES) if groups[e] == "Admin"]
+            wr_def_na = sorted(non_admin,
+                               key=lambda e: -(max(0, MIN_WEEKEND_REST -
+                                               sum(1 for d in range(NUM_DAYS) if assign[e][d]==0 and d in _WEEKEND))
+                                               + rng.random()*0.01))
+            emp_order = wr_def_na + admin_only
+        else:
+            wr_def = []
+            for e in range(NUM_EMPLOYEES):
+                wr = sum(1 for d in range(NUM_DAYS) if assign[e][d] == 0 and d in _WEEKEND)
+                wr_def.append((max(0, MIN_WEEKEND_REST - wr) + rng.random() * 0.01, e))
+            wr_def.sort(reverse=True)
+            emp_order = [e for _, e in wr_def]
+        for e in emp_order:
+            assign[e] = _dp_repair_one(e, assign, fixed, groups, daily_demand, rng)
+
+    return assign
+
+
 def _perturb(
     assign: List[List[int]],
     fixed: List[List[Optional[int]]],
@@ -246,6 +418,149 @@ def _count_srb_score(ae: List[int]) -> float:
     wr = sum(1 for d in range(NUM_DAYS) if ae[d] == 0 and d in _WEEKEND)
     wrm_deficit = max(0, MIN_WEEKEND_REST - wr)
     return srb + wrm_deficit
+
+
+def _weekend_steal(
+    assign: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    rng: random.Random,
+) -> int:
+    """Targeted WR rebalance: move a weekend rest from slack emp to deficit emp.
+
+    Finds an emp X with WR < 4 (deficit) and same-group Y with WR ≥ 5 (slack).
+    On a weekend day where X works and Y rests, swap them. Demand preserved
+    since same group. Returns number of successful swaps.
+    """
+    group_members = {}
+    for e, g in enumerate(groups):
+        group_members.setdefault(g, []).append(e)
+
+    wr_count = [sum(1 for d in range(NUM_DAYS) if assign[e][d] == 0 and d in _WEEKEND)
+                for e in range(NUM_EMPLOYEES)]
+
+    swaps = 0
+    for g, mem in group_members.items():
+        if len(mem) < 2:
+            continue
+        deficits = [e for e in mem if wr_count[e] < MIN_WEEKEND_REST]
+        slacks = [e for e in mem if wr_count[e] > MIN_WEEKEND_REST]
+        if not deficits or not slacks:
+            continue
+        rng.shuffle(deficits)
+        rng.shuffle(slacks)
+        for x in deficits:
+            if wr_count[x] >= MIN_WEEKEND_REST:
+                continue
+            for y in slacks:
+                if wr_count[y] <= MIN_WEEKEND_REST:
+                    continue
+                # Find weekend day where x works, y rests
+                wknds = list(_WEEKEND)
+                rng.shuffle(wknds)
+                for d in wknds:
+                    if fixed[x][d] is not None or fixed[y][d] is not None:
+                        continue
+                    if assign[x][d] != 0 and assign[y][d] == 0:
+                        # Swap: x rests, y works (y takes x's shift)
+                        assign[y][d] = assign[x][d]
+                        assign[x][d] = 0
+                        wr_count[x] += 1
+                        wr_count[y] -= 1
+                        swaps += 1
+                        break
+                if wr_count[x] >= MIN_WEEKEND_REST:
+                    break
+    return swaps
+
+
+def _wr_rebalance_ls(
+    assign: List[List[int]],
+    fixed: List[List[Optional[int]]],
+    groups: List[str],
+    daily_demand: List[List[int]],
+) -> int:
+    """Greedy LS: swap weekday rest ↔ weekend rest between two same-group emps.
+
+    For X (WR deficit) and Y (WR surplus), in same group:
+      - Pick weekday d_wd where X rests and Y works
+      - Pick weekend d_we where X works and Y rests
+      - Swap: X works d_wd, X rests d_we; Y rests d_wd, Y works d_we
+    This preserves monthly rest counts, demand (same group), and improves WR balance.
+    Accepts only improving moves. Returns total swaps.
+    """
+    group_members: dict = {}
+    for e, g in enumerate(groups):
+        group_members.setdefault(g, []).append(e)
+
+    weekdays = [d for d in range(NUM_DAYS) if d not in _WEEKEND]
+
+    total_swaps = 0
+    improved = True
+    while improved:
+        improved = False
+        for g, members in group_members.items():
+            if len(members) < 2:
+                continue
+            wr_count = {e: sum(1 for d in range(NUM_DAYS) if assign[e][d] == 0 and d in _WEEKEND)
+                        for e in members}
+            # Emps with deficit vs surplus
+            deficit_emps = sorted([e for e in members if wr_count[e] < MIN_WEEKEND_REST],
+                                  key=lambda e: wr_count[e])
+            surplus_emps = sorted([e for e in members if wr_count[e] > MIN_WEEKEND_REST],
+                                  key=lambda e: -wr_count[e])
+            if not deficit_emps or not surplus_emps:
+                continue
+            for x in deficit_emps:
+                for y in surplus_emps:
+                    if x == y:
+                        continue
+                    # Find weekday where x rests, y works
+                    x_wd_rests = [d for d in weekdays if assign[x][d] == 0
+                                  and assign[y][d] != 0
+                                  and fixed[x][d] is None and fixed[y][d] is None]
+                    # Find weekend where x works, y rests
+                    x_we_works = [d for d in _WEEKEND if assign[x][d] != 0
+                                  and assign[y][d] == 0
+                                  and fixed[x][d] is None and fixed[y][d] is None]
+                    if not x_wd_rests or not x_we_works:
+                        continue
+                    # Try all combos, pick best improving
+                    best_delta = -1e-9
+                    best_move = None
+                    for d_wd in x_wd_rests[:5]:   # limit search
+                        for d_we in x_we_works[:5]:
+                            # Compute delta
+                            old_ep_x = _ep(assign[x], groups[x])
+                            old_ep_y = _ep(assign[y], groups[y])
+                            sx_wd = assign[x][d_wd]
+                            sy_wd = assign[y][d_wd]
+                            sx_we = assign[x][d_we]
+                            sy_we = assign[y][d_we]
+                            assign[x][d_wd] = sy_wd  # x takes y's shift on d_wd
+                            assign[x][d_we] = 0       # x rests on d_we
+                            assign[y][d_wd] = 0       # y rests on d_wd
+                            assign[y][d_we] = sx_we   # y takes x's shift on d_we
+                            new_ep_x = _ep(assign[x], groups[x])
+                            new_ep_y = _ep(assign[y], groups[y])
+                            delta = (new_ep_x - old_ep_x) + (new_ep_y - old_ep_y)
+                            # Revert
+                            assign[x][d_wd] = sx_wd
+                            assign[x][d_we] = sx_we
+                            assign[y][d_wd] = sy_wd
+                            assign[y][d_we] = sy_we
+                            if delta < best_delta:
+                                best_delta = delta
+                                best_move = (d_wd, d_we, sx_wd, sy_wd, sx_we, sy_we)
+                    if best_move is not None:
+                        d_wd, d_we, sx_wd, sy_wd, sx_we, sy_we = best_move
+                        assign[x][d_wd] = sy_wd
+                        assign[x][d_we] = 0
+                        assign[y][d_wd] = 0
+                        assign[y][d_we] = sx_we
+                        improved = True
+                        total_swaps += 1
+    return total_swaps
 
 
 def _lns_perturb(
@@ -927,6 +1242,15 @@ def sa_solve(
                         assign[e] = _dp_repair_one(e, assign, fixed, groups, daily_demand, rng)
                 cur_p = _full_penalty(assign, daily_demand, groups)
                 T = T_init * reheat_T_factor
+
+    # Post-SA: WR rebalance LS (swap weekday rest ↔ weekend rest between same-group emps)
+    polish_assign = [row[:] for row in best_assign]
+    n_swaps = _wr_rebalance_ls(polish_assign, fixed, groups, daily_demand)
+    if n_swaps > 0:
+        polish_p = _full_penalty(polish_assign, daily_demand, groups)
+        if polish_p < best_p:
+            best_p = polish_p
+            best_assign = [row[:] for row in polish_assign]
 
     # Post-SA DP polish: coord-descent DP-repair until converged
     polish_assign = [row[:] for row in best_assign]
